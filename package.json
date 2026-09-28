@@ -1,0 +1,12 @@
+{
+  "name": "githua-sales-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "check": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
