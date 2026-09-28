@@ -7,25 +7,6 @@ const json = (data, status = 200) =>
     },
   });
 
-async function callOpenAI(env, messages) {
-  if (!env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5",
-      input: messages,
-    }),
-  });
-
-  if (!response.ok) throw new Error(`OpenAI request failed (${response.status})`);
-  return response.json();
-}
-
 async function callOpenRouter(env, messages) {
   if (!env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not configured");
 
@@ -57,11 +38,13 @@ export default {
       return json({ error: "Not found" }, 404);
     }
 
-    if (env.GATEWAY_API_KEY) {
-      const supplied = request.headers.get("authorization");
-      if (supplied !== `Bearer ${env.GATEWAY_API_KEY}`) {
-        return json({ error: "Unauthorized" }, 401);
-      }
+    if (!env.GATEWAY_API_KEY) {
+      return json({ error: "Gateway authentication is not configured" }, 503);
+    }
+
+    const supplied = request.headers.get("authorization");
+    if (supplied !== `Bearer ${env.GATEWAY_API_KEY}`) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     let body;
@@ -77,15 +60,10 @@ export default {
     }
 
     try {
-      const primary = await callOpenAI(env, messages);
-      return json({ provider: "openai", result: primary });
-    } catch (primaryError) {
-      try {
-        const fallback = await callOpenRouter(env, messages);
-        return json({ provider: "openrouter", fallback: true, result: fallback });
-      } catch {
-        return json({ error: "AI providers unavailable" }, 503);
-      }
+      const result = await callOpenRouter(env, messages);
+      return json({ provider: "openrouter", result });
+    } catch {
+      return json({ error: "AI provider unavailable" }, 503);
     }
   },
 };
