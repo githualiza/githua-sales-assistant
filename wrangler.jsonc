@@ -3,6 +3,7 @@
   "name": "githua-sales-assistant",
   "main": "src/index.js",
   "compatibility_date": "2026-09-28",
+  "preview_urls": false,
   "observability": {
     "enabled": true
   }
