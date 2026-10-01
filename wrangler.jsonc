@@ -6,5 +6,13 @@
   "preview_urls": false,
   "observability": {
     "enabled": true
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "githua-sales-assistant-prod",
+      "database_id": "871e8af0-6010-477d-8461-0a8b6e200025",
+      "migrations_dir": "migrations"
+    }
+  ]
 }
