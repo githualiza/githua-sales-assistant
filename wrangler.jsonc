@@ -6,5 +6,15 @@
   "preview_urls": false,
   "observability": {
     "enabled": true
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "PUBLIC_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 12,
+        "period": 60
+      }
+    }
+  ]
 }
