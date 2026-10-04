@@ -15,8 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install
       - name: List pending D1 migrations
         run: npx wrangler d1 migrations list githua-sales-assistant-prod --remote
         env:
