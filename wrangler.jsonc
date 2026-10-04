@@ -7,6 +7,10 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "AUTH0_DOMAIN": "dev-xdx15sdqsgcvtynj.us.auth0.com",
+    "AUTH0_CLIENT_ID": "0LKaX8JbImoUTVGjVG5PQMbFvYEsGiJ9"
+  },
   "d1_databases": [
     {
       "binding": "DB",
