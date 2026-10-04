@@ -144,10 +144,15 @@ async function callback(request, env) {
     name: profile.name || profile.nickname || null,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
   });
-  const headers = new Headers();
+  const headers = new Headers({
+    location: "/",
+    "cache-control": "no-store",
+  });
+  // Keep both Set-Cookie header values. Converting Headers with Object.fromEntries
+  // can collapse duplicate Set-Cookie values and discard the session cookie.
   headers.append("set-cookie", secureCookie("gsa_session", session, SESSION_TTL_SECONDS));
   headers.append("set-cookie", "gsa_auth_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
-  return redirect("/", Object.fromEntries(headers));
+  return new Response(null, { status: 302, headers });
 }
 
 async function logout(request, env) {
