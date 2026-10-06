@@ -173,6 +173,80 @@ async function sessionInfo(request, env) {
   return json({ authenticated: true, user: { id: session.uid, email: session.email, name: session.name } });
 }
 
+async function requireSession(request, env) {
+  authConfig(env);
+  return readSignedValue(env.SESSION_SECRET, cookie(request, "gsa_session"));
+}
+
+async function bootstrapWorkspace(request, env) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
+
+  const user = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(session.uid).first();
+  if (!user) return json({ error: "Authenticated user is not registered" }, 403);
+
+  const existingMembership = await env.DB.prepare(
+    "SELECT m.role, m.status, o.id AS organization_id, o.slug, o.name, o.status AS organization_status FROM memberships m JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = ? AND m.status = 'active' ORDER BY m.created_at LIMIT 1"
+  ).bind(session.uid).first();
+
+  if (existingMembership) {
+    return json({
+      bootstrapped: false,
+      organization: {
+        id: existingMembership.organization_id,
+        slug: existingMembership.slug,
+        name: existingMembership.name,
+        status: existingMembership.organization_status,
+      },
+      membership: { role: existingMembership.role, status: existingMembership.status },
+    });
+  }
+
+  // Bootstrap is intentionally fail-closed: once any organization exists, new
+  // authenticated users cannot make themselves owners through this endpoint.
+  const organizationCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first();
+  if (Number(organizationCount?.count || 0) !== 0) {
+    return json({ error: "Workspace bootstrap is closed" }, 403);
+  }
+
+  const now = new Date().toISOString();
+  const organizationId = crypto.randomUUID();
+  const membershipId = crypto.randomUUID();
+
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO organizations (id, slug, name, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)")
+      .bind(organizationId, "githua-ai-systems", "Githua AI Systems", now, now),
+    env.DB.prepare("INSERT INTO memberships (id, organization_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, ?, 'owner', 'active', ?, ?)")
+      .bind(membershipId, organizationId, session.uid, now, now),
+  ]);
+
+  return json({
+    bootstrapped: true,
+    organization: { id: organizationId, slug: "githua-ai-systems", name: "Githua AI Systems", status: "active" },
+    membership: { role: "owner", status: "active" },
+  }, 201);
+}
+
+async function workspaceInfo(request, env) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
+
+  const membership = await env.DB.prepare(
+    "SELECT m.role, m.status, o.id AS organization_id, o.slug, o.name, o.status AS organization_status FROM memberships m JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = ? AND m.status = 'active' ORDER BY m.created_at LIMIT 1"
+  ).bind(session.uid).first();
+
+  if (!membership) return json({ error: "No active workspace membership" }, 403);
+  return json({
+    organization: {
+      id: membership.organization_id,
+      slug: membership.slug,
+      name: membership.name,
+      status: membership.organization_status,
+    },
+    membership: { role: membership.role, status: membership.status },
+  });
+}
+
 function validateMessages(value) {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MESSAGES) {
     return { error: `messages must contain 1-${MAX_MESSAGES} items` };
@@ -220,6 +294,8 @@ export default {
       if (request.method === "GET" && url.pathname === "/auth/callback") return await callback(request, env);
       if (request.method === "GET" && url.pathname === "/logout") return await logout(request, env);
       if (request.method === "GET" && url.pathname === "/v1/session") return await sessionInfo(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/bootstrap") return await bootstrapWorkspace(request, env);
+      if (request.method === "GET" && url.pathname === "/v1/workspace") return await workspaceInfo(request, env);
     } catch {
       return json({ error: "Authentication service unavailable" }, 503);
     }
