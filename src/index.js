@@ -463,6 +463,61 @@ async function leadDetailPage(request, env, leadId) {
   });
 }
 
+
+const CONVERSATION_READ_ROLES = new Set(["owner","admin","manager","agent","viewer"]);
+const CONVERSATION_WRITE_ROLES = new Set(["owner","admin","manager","agent"]);
+const CONVERSATION_STATUSES = new Set(["open","closed","archived"]);
+const MAX_CONVERSATION_MESSAGE = 12000;
+
+async function conversationsPage(request, env) {
+  const session=await requireSession(request,env); if(!session?.uid) return redirect("/login");
+  const m=await activeMembership(session,env); if(!m||!CONVERSATION_READ_ROLES.has(m.role)) return html("<title>Access unavailable</title><p>No active workspace access.</p>",403);
+  const rows=await env.DB.prepare("SELECT c.id,c.channel,c.status,c.updated_at,l.name AS lead_name,(SELECT content FROM messages x WHERE x.conversation_id=c.id AND x.organization_id=c.organization_id ORDER BY x.created_at DESC LIMIT 1) AS last_message FROM conversations c LEFT JOIN leads l ON l.id=c.lead_id AND l.organization_id=c.organization_id WHERE c.organization_id=? ORDER BY c.updated_at DESC LIMIT 100").bind(m.organization_id).all();
+  const leads=await env.DB.prepare("SELECT id,name,company FROM leads WHERE organization_id=? ORDER BY updated_at DESC LIMIT 100").bind(m.organization_id).all();
+  const canWrite=CONVERSATION_WRITE_ROLES.has(m.role);
+  const cards=(rows.results||[]).map(x=>'<article class="card"><div><h3>'+(escapeHtml(x.lead_name||"Unlinked conversation"))+'</h3><p>'+escapeHtml(x.last_message||"No messages yet")+'</p><small>'+escapeHtml(x.channel)+' · '+escapeHtml(x.status)+'</small></div><a href="/conversations/'+encodeURIComponent(x.id)+'">Open →</a></article>').join("");
+  const opts=(leads.results||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name+(x.company?" · "+x.company:""))+'</option>').join("");
+  return html('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversations · Githua Sales Assistant</title><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% 0,rgba(128,64,176,.25),transparent 32%),#08080b;color:#fff;font:15px/1.5 Inter,system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:34px 24px}a{color:#d19aff;text-decoration:none}h1{font:400 48px/1.05 Georgia,serif;margin:28px 0 8px;color:#fff0df}.sub,p,small{color:#bdb3c5}.toolbar,.card{display:flex;justify-content:space-between;align-items:center;gap:20px}.toolbar{margin:30px 0 18px}.card{padding:20px;margin:12px 0;border:1px solid rgba(224,190,238,.28);border-radius:16px;background:linear-gradient(145deg,rgba(47,35,53,.68),rgba(15,13,20,.92))}.card h3{margin:0 0 5px}.card p{margin:0 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:720px}.btn{border:0;border-radius:999px;padding:12px 20px;background:linear-gradient(90deg,#ffe0bf,#c778ef);color:#160f18;font-weight:700;cursor:pointer}.empty{padding:60px 20px;text-align:center;border:1px solid #4d4254;border-radius:18px;color:#bdb3c5}dialog{width:min(560px,calc(100% - 32px));border:1px solid #765e82;border-radius:20px;background:#120f17;color:#fff;padding:26px}dialog::backdrop{background:rgba(0,0,0,.72)}form{display:grid;gap:13px}label{display:grid;gap:6px;color:#c8bfce}select,textarea{border:1px solid #514858;border-radius:10px;padding:12px;background:#0a0910;color:#fff;font:inherit}textarea{min-height:130px}.actions{display:flex;justify-content:flex-end;gap:10px}.secondary{background:#26202c;color:#fff}.error{color:#ffb8b8;min-height:20px}</style></head><body><main><a href="/">← Overview</a><h1>Conversations</h1><p class="sub">Keep client discussions and follow-ups together.</p><div class="toolbar"><span>'+(rows.results||[]).length+' conversation'+((rows.results||[]).length===1?"":"s")+'</span>'+(canWrite?'<button class="btn" id="start">＋ Start conversation</button>':"")+'</div>'+(cards||'<div class="empty">No conversations yet. Start one when you are ready.</div>')+(canWrite?'<dialog id="d"><form id="f"><h2>Start a conversation</h2><label>Lead (optional)<select name="lead_id"><option value="">No linked lead</option>'+opts+'</select></label><label>First message<textarea name="message" maxlength="12000" required placeholder="Add a note, client message or follow-up…"></textarea></label><div class="error" id="err"></div><div class="actions"><button type="button" class="btn secondary" id="cancel">Cancel</button><button class="btn">Start</button></div></form></dialog><script nonce="conv-ui">const d=document.getElementById("d"),f=document.getElementById("f"),e=document.getElementById("err");document.getElementById("start").onclick=()=>d.showModal();document.getElementById("cancel").onclick=()=>d.close();f.onsubmit=async(ev)=>{ev.preventDefault();e.textContent="";const data=Object.fromEntries(new FormData(f));const r=await fetch("/v1/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(data)});const j=await r.json();if(!r.ok){e.textContent=j.error||"Unable to start conversation";return}location.href="/conversations/"+encodeURIComponent(j.conversation.id)};</script>':"")+'</main></body></html>',200,{"content-security-policy":"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-conv-ui'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});
+}
+
+async function conversationDetailPage(request,env,id){
+  const session=await requireSession(request,env); if(!session?.uid)return redirect("/login");
+  const m=await activeMembership(session,env); if(!m||!CONVERSATION_READ_ROLES.has(m.role))return html("<title>Forbidden</title><p>Forbidden</p>",403);
+  const conv=await env.DB.prepare("SELECT c.id,c.lead_id,c.channel,c.status,l.name AS lead_name FROM conversations c LEFT JOIN leads l ON l.id=c.lead_id AND l.organization_id=c.organization_id WHERE c.id=? AND c.organization_id=?").bind(id,m.organization_id).first();
+  if(!conv)return html("<title>Conversation not found</title><p>Conversation not found.</p>",404);
+  const msgs=await env.DB.prepare("SELECT id,actor_type,content,created_at FROM messages WHERE conversation_id=? AND organization_id=? ORDER BY created_at ASC LIMIT 500").bind(id,m.organization_id).all();
+  const canWrite=CONVERSATION_WRITE_ROLES.has(m.role);
+  const history=(msgs.results||[]).map(x=>'<article class="msg"><strong>'+escapeHtml(x.actor_type==="customer"?"Client":x.actor_type==="assistant"?"Assistant":"You")+'</strong><p>'+escapeHtml(x.content)+'</p><small>'+escapeHtml(x.created_at)+'</small></article>').join("");
+  return html('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversation · Githua Sales Assistant</title><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0,rgba(128,64,176,.25),transparent 32%),#08080b;color:#fff;font:15px/1.5 Inter,system-ui,sans-serif}main{max-width:900px;margin:auto;padding:34px 24px}a{color:#d19aff;text-decoration:none}h1{font:400 42px Georgia,serif;color:#fff0df}.meta{color:#bdb3c5}.msg{padding:18px 20px;margin:12px 0;border:1px solid #493e50;border-radius:15px;background:#121016}.msg p{white-space:pre-wrap;color:#eee}.msg small{color:#8f8798}.compose{margin-top:24px;padding:20px;border:1px solid #624c6e;border-radius:16px;background:#100d14}textarea{width:100%;min-height:110px;border:1px solid #514858;border-radius:10px;padding:12px;background:#08070b;color:#fff;font:inherit}.row{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}.btn{border:0;border-radius:999px;padding:11px 18px;background:linear-gradient(90deg,#ffe0bf,#c778ef);color:#160f18;font-weight:700;cursor:pointer}.secondary{background:#28212e;color:#fff}.notice{min-height:20px;color:#c9f4d3}</style></head><body><main><a href="/conversations">← Conversations</a><h1>'+escapeHtml(conv.lead_name||"Conversation")+'</h1><p class="meta">'+escapeHtml(conv.channel)+' · <span id="status">'+escapeHtml(conv.status)+'</span></p><section>'+history+'</section>'+(canWrite?'<div class="compose"><form id="messageForm"><textarea name="content" maxlength="12000" required placeholder="Write a message or internal conversation note…"></textarea><div class="notice" id="notice"></div><div class="row"><button type="button" class="btn secondary" id="toggle">'+(conv.status==="open"?"Close conversation":"Reopen conversation")+'</button><button class="btn">Add message</button></div></form></div><script nonce="conv-detail">const f=document.getElementById("messageForm"),n=document.getElementById("notice");f.onsubmit=async(e)=>{e.preventDefault();const data=Object.fromEntries(new FormData(f));const r=await fetch("/v1/conversations/'+encodeURIComponent(id)+'/messages",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(data)});const j=await r.json();if(!r.ok){n.textContent=j.error||"Unable to add message";return}location.reload()};document.getElementById("toggle").onclick=async()=>{const next="'+(conv.status==="open"?"closed":"open")+'";const r=await fetch("/v1/conversations/'+encodeURIComponent(id)+'",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status:next})});if(r.ok)location.reload();};</script>':"")+'</main></body></html>',200,{"content-security-policy":"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-conv-detail'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});
+}
+
+async function createConversation(request,env){
+  const session=await requireSession(request,env); if(!session?.uid)return json({error:"Unauthorized"},401);
+  const m=await activeMembership(session,env); if(!m||!CONVERSATION_WRITE_ROLES.has(m.role))return json({error:"Forbidden"},403);
+  if(!(request.headers.get("content-type")||"").toLowerCase().includes("application/json"))return json({error:"Content-Type must be application/json"},415);
+  const b=await request.json(); const message=typeof b.message==="string"?b.message.trim():""; if(!message||message.length>MAX_CONVERSATION_MESSAGE)return json({error:"A first message is required"},400);
+  let leadId=typeof b.lead_id==="string"&&b.lead_id.trim()?b.lead_id.trim():null;
+  if(leadId){const lead=await env.DB.prepare("SELECT id FROM leads WHERE id=? AND organization_id=?").bind(leadId,m.organization_id).first();if(!lead)return json({error:"Lead not found"},400);}
+  const id=crypto.randomUUID(),msgId=crypto.randomUUID(),now=new Date().toISOString();
+  await env.DB.batch([env.DB.prepare("INSERT INTO conversations(id,organization_id,lead_id,assigned_user_id,channel,status,created_at,updated_at) VALUES(?,?,?,?,?,'open',?,?)").bind(id,m.organization_id,leadId,session.uid,"web",now,now),env.DB.prepare("INSERT INTO messages(id,organization_id,conversation_id,actor_type,actor_user_id,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(msgId,m.organization_id,id,"user",session.uid,message,now)]);
+  return json({conversation:{id,status:"open"}},201);
+}
+async function addConversationMessage(request,env,id){
+  const session=await requireSession(request,env); if(!session?.uid)return json({error:"Unauthorized"},401);
+  const m=await activeMembership(session,env); if(!m||!CONVERSATION_WRITE_ROLES.has(m.role))return json({error:"Forbidden"},403);
+  const conv=await env.DB.prepare("SELECT id,status FROM conversations WHERE id=? AND organization_id=?").bind(id,m.organization_id).first(); if(!conv)return json({error:"Conversation not found"},404); if(conv.status!=="open")return json({error:"Reopen the conversation before adding a message"},409);
+  const b=await request.json(); const content=typeof b.content==="string"?b.content.trim():""; if(!content||content.length>MAX_CONVERSATION_MESSAGE)return json({error:"Invalid message"},400);
+  const now=new Date().toISOString(); await env.DB.batch([env.DB.prepare("INSERT INTO messages(id,organization_id,conversation_id,actor_type,actor_user_id,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(crypto.randomUUID(),m.organization_id,id,"user",session.uid,content,now),env.DB.prepare("UPDATE conversations SET updated_at=? WHERE id=? AND organization_id=?").bind(now,id,m.organization_id)]);
+  return json({ok:true},201);
+}
+async function updateConversation(request,env,id){
+  const session=await requireSession(request,env); if(!session?.uid)return json({error:"Unauthorized"},401);
+  const m=await activeMembership(session,env); if(!m||!CONVERSATION_WRITE_ROLES.has(m.role))return json({error:"Forbidden"},403);
+  const b=await request.json(); if(typeof b.status!=="string"||!CONVERSATION_STATUSES.has(b.status))return json({error:"Invalid conversation status"},400);
+  const found=await env.DB.prepare("SELECT id FROM conversations WHERE id=? AND organization_id=?").bind(id,m.organization_id).first(); if(!found)return json({error:"Conversation not found"},404);
+  await env.DB.prepare("UPDATE conversations SET status=?,updated_at=? WHERE id=? AND organization_id=?").bind(b.status,new Date().toISOString(),id,m.organization_id).run(); return json({ok:true});
+}
+
 function validateMessages(value) {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MESSAGES) {
     return { error: `messages must contain 1-${MAX_MESSAGES} items` };
@@ -518,6 +573,17 @@ export default {
         const leadId = decodeURIComponent(url.pathname.slice("/leads/".length));
         if (!leadId || leadId.includes("/")) return json({ error: "Not found" }, 404);
         return await leadDetailPage(request, env, leadId);
+      }
+      if (request.method === "GET" && url.pathname === "/conversations") return await conversationsPage(request, env);
+      if (request.method === "GET" && url.pathname.startsWith("/conversations/")) {
+        const id=decodeURIComponent(url.pathname.slice("/conversations/".length)); if(!id||id.includes("/")) return json({error:"Not found"},404); return await conversationDetailPage(request,env,id);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/conversations") return await createConversation(request,env);
+      if (request.method === "POST" && /^\/v1\/conversations\/[^/]+\/messages$/.test(url.pathname)) {
+        const id=decodeURIComponent(url.pathname.split("/")[3]); return await addConversationMessage(request,env,id);
+      }
+      if (request.method === "PATCH" && /^\/v1\/conversations\/[^/]+$/.test(url.pathname)) {
+        const id=decodeURIComponent(url.pathname.split("/")[3]); return await updateConversation(request,env,id);
       }
       if (request.method === "GET" && url.pathname === "/v1/leads") return await listLeads(request, env);
       if (request.method === "POST" && url.pathname === "/v1/leads") return await createLead(request, env);
