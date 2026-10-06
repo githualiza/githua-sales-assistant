@@ -293,7 +293,7 @@ async function dashboard(request, env) {
   const firstName = escapeHtml((session.name || "there").trim().split(/\s+/)[0]);
   const orgName = escapeHtml(membership.name);
   const role = escapeHtml(membership.role);
-  return html(\`<!doctype html>
+  return html(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -339,7 +339,7 @@ main{padding:44px clamp(24px,5vw,72px)}.top{display:flex;justify-content:space-b
   </section>
 </main>
 </div>
-</body></html>\`);
+</body></html>`);
 }
 
 function validateMessages(value) {
