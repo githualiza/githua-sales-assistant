@@ -248,6 +248,123 @@ async function workspaceInfo(request, env) {
 }
 
 
+
+const LEAD_READ_ROLES = new Set(["owner", "admin", "manager", "agent", "viewer"]);
+const LEAD_WRITE_ROLES = new Set(["owner", "admin", "manager", "agent"]);
+const LEAD_STATUSES = new Set(["new", "qualified", "contacted", "won", "lost"]);
+const MAX_LEAD_FIELD = 500;
+const MAX_LEAD_NOTES = 8000;
+
+async function activeMembership(session, env) {
+  if (!session?.uid) return null;
+  return env.DB.prepare(
+    "SELECT m.role, m.status, o.id AS organization_id, o.status AS organization_status FROM memberships m JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = ? AND m.status = 'active' AND o.status = 'active' ORDER BY m.created_at LIMIT 1"
+  ).bind(session.uid).first();
+}
+
+function cleanLeadText(value, max = MAX_LEAD_FIELD) {
+  if (value == null) return null;
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.trim();
+  if (cleaned.length > max) return undefined;
+  return cleaned || null;
+}
+
+async function listLeads(request, env) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
+  const membership = await activeMembership(session, env);
+  if (!membership || !LEAD_READ_ROLES.has(membership.role)) return json({ error: "Forbidden" }, 403);
+
+  const url = new URL(request.url);
+  const requestedStatus = url.searchParams.get("status");
+  if (requestedStatus && !LEAD_STATUSES.has(requestedStatus)) return json({ error: "Invalid lead status" }, 400);
+  const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50, 1), 100);
+
+  const query = requestedStatus
+    ? "SELECT id, owner_user_id, name, company, email, phone, status, source, notes, created_at, updated_at FROM leads WHERE organization_id = ? AND status = ? ORDER BY updated_at DESC LIMIT ?"
+    : "SELECT id, owner_user_id, name, company, email, phone, status, source, notes, created_at, updated_at FROM leads WHERE organization_id = ? ORDER BY updated_at DESC LIMIT ?";
+  const stmt = requestedStatus
+    ? env.DB.prepare(query).bind(membership.organization_id, requestedStatus, limit)
+    : env.DB.prepare(query).bind(membership.organization_id, limit);
+  const result = await stmt.all();
+  return json({ leads: result.results || [] });
+}
+
+async function createLead(request, env) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
+  const membership = await activeMembership(session, env);
+  if (!membership || !LEAD_WRITE_ROLES.has(membership.role)) return json({ error: "Forbidden" }, 403);
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().startsWith("application/json")) return json({ error: "Content-Type must be application/json" }, 415);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "Invalid lead" }, 400);
+
+  const name = cleanLeadText(body.name);
+  if (!name || name === undefined) return json({ error: "Lead name is required and must be 500 characters or fewer" }, 400);
+  const company = cleanLeadText(body.company);
+  const email = cleanLeadText(body.email);
+  const phone = cleanLeadText(body.phone);
+  const source = cleanLeadText(body.source);
+  const notes = cleanLeadText(body.notes, MAX_LEAD_NOTES);
+  if ([company, email, phone, source, notes].some((value) => value === undefined)) return json({ error: "One or more lead fields are invalid" }, 400);
+  const status = body.status == null ? "new" : body.status;
+  if (typeof status !== "string" || !LEAD_STATUSES.has(status)) return json({ error: "Invalid lead status" }, 400);
+
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO leads (id, organization_id, owner_user_id, name, company, email, phone, status, source, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, membership.organization_id, session.uid, name, company, email, phone, status, source, notes, now, now).run();
+  return json({ lead: { id, name, company, email, phone, status, source, notes, owner_user_id: session.uid, created_at: now, updated_at: now } }, 201);
+}
+
+async function updateLead(request, env, leadId) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
+  const membership = await activeMembership(session, env);
+  if (!membership || !LEAD_WRITE_ROLES.has(membership.role)) return json({ error: "Forbidden" }, 403);
+
+  const existing = await env.DB.prepare(
+    "SELECT id, name, company, email, phone, status, source, notes FROM leads WHERE id = ? AND organization_id = ?"
+  ).bind(leadId, membership.organization_id).first();
+  if (!existing) return json({ error: "Lead not found" }, 404);
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().startsWith("application/json")) return json({ error: "Content-Type must be application/json" }, 415);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "Invalid lead" }, 400);
+
+  const next = { ...existing };
+  for (const field of ["name", "company", "email", "phone", "source"]) {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      const value = cleanLeadText(body[field]);
+      if (value === undefined || (field === "name" && !value)) return json({ error: "Invalid lead field" }, 400);
+      next[field] = value;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "notes")) {
+    const value = cleanLeadText(body.notes, MAX_LEAD_NOTES);
+    if (value === undefined) return json({ error: "Invalid lead notes" }, 400);
+    next.notes = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "status")) {
+    if (typeof body.status !== "string" || !LEAD_STATUSES.has(body.status)) return json({ error: "Invalid lead status" }, 400);
+    next.status = body.status;
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE leads SET name = ?, company = ?, email = ?, phone = ?, status = ?, source = ?, notes = ?, updated_at = ? WHERE id = ? AND organization_id = ?"
+  ).bind(next.name, next.company, next.email, next.phone, next.status, next.source, next.notes, now, leadId, membership.organization_id).run();
+  return json({ lead: { ...next, id: leadId, updated_at: now } });
+}
+
+
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -392,6 +509,13 @@ export default {
       if (request.method === "GET" && url.pathname === "/v1/session") return await sessionInfo(request, env);
       if (request.method === "POST" && url.pathname === "/v1/bootstrap") return await bootstrapWorkspace(request, env);
       if (request.method === "GET" && url.pathname === "/v1/workspace") return await workspaceInfo(request, env);
+      if (request.method === "GET" && url.pathname === "/v1/leads") return await listLeads(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/leads") return await createLead(request, env);
+      if (["PATCH", "PUT"].includes(request.method) && url.pathname.startsWith("/v1/leads/")) {
+        const leadId = decodeURIComponent(url.pathname.slice("/v1/leads/".length));
+        if (!leadId || leadId.includes("/")) return json({ error: "Not found" }, 404);
+        return await updateLead(request, env, leadId);
+      }
     } catch {
       return json({ error: "Authentication service unavailable" }, 503);
     }
