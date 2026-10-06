@@ -247,6 +247,101 @@ async function workspaceInfo(request, env) {
   });
 }
 
+
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
+function html(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    },
+  });
+}
+
+async function dashboard(request, env) {
+  const session = await requireSession(request, env);
+  if (!session?.uid) return redirect("/login");
+
+  const membership = await env.DB.prepare(
+    "SELECT m.role, m.status, o.id AS organization_id, o.name, o.status AS organization_status FROM memberships m JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = ? AND m.status = 'active' ORDER BY m.created_at LIMIT 1"
+  ).bind(session.uid).first();
+  if (!membership || membership.organization_status !== "active") {
+    return html("<!doctype html><title>Access unavailable</title><p>No active workspace access.</p>", 403);
+  }
+
+  const orgId = membership.organization_id;
+  const [leadCount, conversationCount, wonCount] = await env.DB.batch([
+    env.DB.prepare("SELECT COUNT(*) AS count FROM leads WHERE organization_id = ?").bind(orgId),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM conversations WHERE organization_id = ? AND status = 'open'").bind(orgId),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM leads WHERE organization_id = ? AND status = 'won'").bind(orgId),
+  ]);
+  const counts = {
+    leads: Number(leadCount.results?.[0]?.count || 0),
+    conversations: Number(conversationCount.results?.[0]?.count || 0),
+    won: Number(wonCount.results?.[0]?.count || 0),
+  };
+
+  const firstName = escapeHtml((session.name || "there").trim().split(/\s+/)[0]);
+  const orgName = escapeHtml(membership.name);
+  const role = escapeHtml(membership.role);
+  return html(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Githua Sales Assistant</title>
+<style>
+:root{--ink:#08090b;--panel:rgba(20,22,26,.72);--line:rgba(255,255,255,.10);--muted:#a9adb7;--pearl:#f5f2ed;--glow:#b9d8dc;--violet:#c9c0e8}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 78% 8%,rgba(201,192,232,.18),transparent 28%),radial-gradient(circle at 18% 82%,rgba(185,216,220,.12),transparent 32%),var(--ink);color:var(--pearl);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+.shell{display:grid;grid-template-columns:236px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:28px 18px;display:flex;flex-direction:column;background:rgba(8,9,11,.66);backdrop-filter:blur(18px)}
+.brand{padding:0 10px 30px}.mark{width:34px;height:34px;border-radius:12px;background:linear-gradient(135deg,#fff 0%,#cad9dc 45%,#c8bee7 100%);box-shadow:0 0 30px rgba(202,213,229,.16);margin-bottom:13px}.brand strong{display:block;letter-spacing:.01em}.brand span{font-size:12px;color:var(--muted)}
+nav{display:grid;gap:5px}.nav{padding:11px 12px;border-radius:12px;color:#b8bbc3;text-decoration:none}.nav.active,.nav:hover{color:#fff;background:rgba(255,255,255,.07)}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:10px;vertical-align:2px}
+.account{margin-top:auto;padding:16px 10px 0;border-top:1px solid var(--line)}.account small{display:block;color:var(--muted);text-transform:capitalize}.logout{display:inline-block;color:#ddd;text-decoration:none;margin-top:10px;font-size:13px}
+main{padding:44px clamp(24px,5vw,72px)}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:42px}.eyebrow{color:#bfc2c9;font-size:12px;letter-spacing:.13em;text-transform:uppercase}.top h1{font-size:clamp(30px,4vw,50px);font-weight:500;letter-spacing:-.045em;margin:8px 0 6px}.top p{margin:0;color:var(--muted);max-width:600px}.status{border:1px solid var(--line);border-radius:999px;padding:8px 12px;color:#cfd5d5;background:rgba(255,255,255,.035);white-space:nowrap;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px}.card{border:1px solid var(--line);background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.025));border-radius:20px;padding:22px;backdrop-filter:blur(16px);box-shadow:inset 0 1px rgba(255,255,255,.06)}.metric span{color:var(--muted);font-size:13px}.metric strong{display:block;font-size:34px;font-weight:450;letter-spacing:-.04em;margin-top:13px}
+.hero{display:grid;grid-template-columns:1.35fr .65fr;gap:14px}.assistant{min-height:250px;position:relative;overflow:hidden}.assistant:after{content:"";position:absolute;width:190px;height:190px;border-radius:50%;right:-50px;bottom:-80px;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.35),rgba(185,216,220,.14) 38%,rgba(201,192,232,.08) 62%,transparent 70%);filter:blur(1px)}.assistant h2,.quick h2{font-size:20px;font-weight:500;margin:0 0 8px}.assistant p,.quick p{color:var(--muted);max-width:540px;margin:0}.soon{display:inline-block;margin-top:28px;border:1px solid var(--line);border-radius:12px;padding:10px 14px;color:#d9d9dc;font-size:13px}.quick{min-height:250px}.quicklinks{display:grid;gap:9px;margin-top:20px}.quicklinks div{padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.045);color:#d9dadd;font-size:13px}
+@media(max-width:850px){.shell{grid-template-columns:1fr}.side{position:static;border-right:0;border-bottom:1px solid var(--line);padding:18px}.brand{padding-bottom:14px}.brand .mark{display:none}nav{grid-template-columns:repeat(4,1fr);overflow:auto}.nav{white-space:nowrap}.account{display:none}main{padding:28px 18px}.top{margin-bottom:28px}.grid,.hero{grid-template-columns:1fr}.status{display:none}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side">
+  <div class="brand"><div class="mark"></div><strong>Githua AI Systems</strong><span>Sales Assistant</span></div>
+  <nav>
+    <a class="nav active" href="/"><span class="dot"></span>Overview</a>
+    <a class="nav" href="#"><span class="dot"></span>Leads</a>
+    <a class="nav" href="#"><span class="dot"></span>Conversations</a>
+    <a class="nav" href="#"><span class="dot"></span>Tasks</a>
+    <a class="nav" href="#"><span class="dot"></span>Proposals & budgets</a>
+    <a class="nav" href="#"><span class="dot"></span>Knowledge</a>
+    <a class="nav" href="#"><span class="dot"></span>Settings</a>
+  </nav>
+  <div class="account"><strong>\${orgName}</strong><small>\${role}</small><a class="logout" href="/logout">Sign out</a></div>
+</aside>
+<main>
+  <header class="top"><div><div class="eyebrow">Intelligence engineered around people</div><h1>Good to see you, \${firstName}.</h1><p>A calm view of your sales work, conversations and next moves.</p></div><div class="status">● Workspace active</div></header>
+  <section class="grid">
+    <div class="card metric"><span>Total leads</span><strong>\${counts.leads}</strong></div>
+    <div class="card metric"><span>Open conversations</span><strong>\${counts.conversations}</strong></div>
+    <div class="card metric"><span>Won leads</span><strong>\${counts.won}</strong></div>
+  </section>
+  <section class="hero">
+    <div class="card assistant"><div class="eyebrow">Githua Sales Assistant</div><h2>Your AI workspace is taking shape.</h2><p>The secure foundation is live. Next, the assistant will help qualify leads, prepare follow-ups, organise tasks and draft proposals without exposing your private gateway credentials.</p><span class="soon">AI actions · coming next</span></div>
+    <div class="card quick"><div class="eyebrow">Workspace</div><h2>Simple by design.</h2><p>Only the tools your team needs, with access controlled by role.</p><div class="quicklinks"><div>Lead pipeline</div><div>Client conversations</div><div>Proposals & budgets</div></div></div>
+  </section>
+</main>
+</div>
+</body></html>`);
+}
+
 function validateMessages(value) {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MESSAGES) {
     return { error: `messages must contain 1-${MAX_MESSAGES} items` };
@@ -289,6 +384,7 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (request.method === "GET" && url.pathname === "/") return await dashboard(request, env);
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "githua-sales-assistant" });
       if (request.method === "GET" && url.pathname === "/login") return await startLogin(request, env);
       if (request.method === "GET" && url.pathname === "/auth/callback") return await callback(request, env);
