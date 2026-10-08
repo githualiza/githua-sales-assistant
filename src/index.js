@@ -729,7 +729,7 @@ async function websiteLeadIntake(request, env) {
   const requestId=typeof b.requestId==="string"&&/^[a-f0-9-]{36}$/i.test(b.requestId)?b.requestId:null;
   const name=cleanLeadText(b.name),company=cleanLeadText(b.company),email=cleanLeadText(b.email),
     phone=cleanLeadText(b.phone),notes=cleanLeadText(b.notes,MAX_LEAD_NOTES);
-  if(!requestId||!name||!email||!/^\\S+@\\S+\\.\\S+$/.test(email)||[company,phone,notes].some(v=>v===undefined))return json({error:"Invalid lead"},400);
+  if(!requestId||!name||!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||[company,phone,notes].some(v=>v===undefined))return json({error:"Invalid lead"},400);
   const org=env.SALES_INTAKE_ORGANIZATION_ID,source="website:"+requestId;
   const previous=await env.DB.prepare("SELECT id FROM leads WHERE organization_id=? AND source=? LIMIT 1").bind(org,source).first();
   if(previous)return json({ok:true,duplicate:true,leadId:previous.id});
