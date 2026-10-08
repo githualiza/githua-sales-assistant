@@ -717,12 +717,34 @@ async function callOpenRouter(env, messages) {
   }
 }
 
+
+/* Authenticated website intake, disabled until server secrets are configured. */
+async function websiteLeadIntake(request, env) {
+  if (!env.SALES_INTAKE_TOKEN || !env.SALES_INTAKE_ORGANIZATION_ID) return json({error:"Intake not configured"},503);
+  if (request.headers.get("authorization") !== `Bearer ${env.SALES_INTAKE_TOKEN}`) return json({error:"Unauthorized"},401);
+  if (!(request.headers.get("content-type")||"").startsWith("application/json")) return json({error:"Expected JSON"},415);
+  const raw=await request.text();
+  if (encoder.encode(raw).length>32768)return json({error:"Payload too large"},413);
+  let b;try{b=JSON.parse(raw)}catch{return json({error:"Invalid JSON"},400)}
+  const requestId=typeof b.requestId==="string"&&/^[a-f0-9-]{36}$/i.test(b.requestId)?b.requestId:null;
+  const name=cleanLeadText(b.name),company=cleanLeadText(b.company),email=cleanLeadText(b.email),
+    phone=cleanLeadText(b.phone),notes=cleanLeadText(b.notes,MAX_LEAD_NOTES);
+  if(!requestId||!name||!email||!/^\\S+@\\S+\\.\\S+$/.test(email)||[company,phone,notes].some(v=>v===undefined))return json({error:"Invalid lead"},400);
+  const org=env.SALES_INTAKE_ORGANIZATION_ID,source="website:"+requestId;
+  const previous=await env.DB.prepare("SELECT id FROM leads WHERE organization_id=? AND source=? LIMIT 1").bind(org,source).first();
+  if(previous)return json({ok:true,duplicate:true,leadId:previous.id});
+  const id=crypto.randomUUID(),now=new Date().toISOString();
+  await env.DB.prepare("INSERT INTO leads (id,organization_id,owner_user_id,name,company,email,phone,status,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,org,null,name,company,email,phone,"new",source,notes||"",now,now).run();
+  return json({ok:true,leadId:id},201);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     try {
       if (request.method === "GET" && url.pathname === "/") return await dashboard(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/intake/website") return await websiteLeadIntake(request,env);
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "githua-sales-assistant" });
       if (request.method === "GET" && url.pathname === "/login") return await startLogin(request, env);
       if (request.method === "GET" && url.pathname === "/auth/callback") return await callback(request, env);
