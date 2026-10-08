@@ -468,9 +468,9 @@ async function dashboard(request, env) {
 .premium-assistant .assistant-capability{background:rgba(17,9,27,.28)!important;border:1px solid rgba(236,206,247,.19)!important;backdrop-filter:blur(8px)}
 /* Cohesive luxury refinement: feather image edges; soften existing glass surfaces. */
 .premium-assistant .premium-bird{height:194px!important;margin:-10px -8px 10px!important;overflow:visible!important}
-.premium-assistant .cinematic-bird{-webkit-mask-image:radial-gradient(ellipse 82% 79% at 50% 50%,#000 45%,rgba(0,0,0,.88) 65%,transparent 100%);mask-image:radial-gradient(ellipse 82% 79% at 50% 50%,#000 45%,rgba(0,0,0,.88) 65%,transparent 100%);background-size:contain;background-position:center}
+.premium-assistant .cinematic-bird{-webkit-mask-image:radial-gradient(ellipse 73% 69% at 50% 50%,#000 28%,rgba(0,0,0,.98) 39%,rgba(0,0,0,.72) 57%,rgba(0,0,0,.25) 75%,transparent 98%);mask-image:radial-gradient(ellipse 73% 69% at 50% 50%,#000 28%,rgba(0,0,0,.98) 39%,rgba(0,0,0,.72) 57%,rgba(0,0,0,.25) 75%,transparent 98%);background-size:contain;background-position:center}
 .premium-assistant h2,.premium-assistant>p,.assistant-kicker{position:relative;z-index:1;text-shadow:0 2px 14px rgba(9,4,17,.9),0 0 22px rgba(9,4,17,.55)}
-.premium-assistant>p{color:#f0e4ef!important}
+.premium-assistant>p{color:#f7eaf4!important;text-shadow:0 2px 12px rgba(9,4,17,.96),0 0 24px rgba(9,4,17,.78)!important}
 .premium-assistant .assistant-capability{background:rgba(22,10,34,.34)!important;border-color:rgba(239,211,255,.24)!important;border-radius:18px!important}
 .stats .card,.quick.card{border-radius:24px!important;border-color:rgba(245,216,255,.25)!important;box-shadow:0 12px 38px rgba(7,3,15,.12)!important;backdrop-filter:blur(17px) saturate(116%)!important;-webkit-backdrop-filter:blur(17px) saturate(116%)!important}
 .actions .action{border-radius:17px!important;border-color:rgba(241,215,252,.24)!important;background:linear-gradient(145deg,rgba(49,28,61,.39),rgba(13,8,25,.54))!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important}
