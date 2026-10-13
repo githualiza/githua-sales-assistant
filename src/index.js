@@ -761,7 +761,7 @@ async function websiteLeadIntake(request, env) {
     "SELECT id,notes,company,phone FROM leads WHERE organization_id=? AND lower(trim(email))=? AND source LIKE 'website:%' AND status IN ('new','contacted','qualified','proposal') ORDER BY updated_at DESC LIMIT 1"
   ).bind(org,email.trim().toLowerCase()).first();
   if(match){
-    const extra="\\n\\n--- New website enquiry ("+requestId+") ---\\n"+(notes||"(No additional notes)");
+    const extra="\n\n--- New website enquiry ("+requestId+") ---\n"+(notes||"(No additional notes)");
     const combined=((match.notes||"")+extra).slice(-MAX_LEAD_NOTES);
     await env.DB.prepare("UPDATE leads SET notes=?,company=?,phone=?,updated_at=? WHERE id=? AND organization_id=?")
       .bind(combined,company||match.company,phone||match.phone,new Date().toISOString(),match.id,org).run();
