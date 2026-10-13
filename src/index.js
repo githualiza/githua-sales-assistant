@@ -752,13 +752,21 @@ function triageWebsiteLead(notes, company, phone) {
 
 async function createWebsiteFollowUp(env, organizationId, leadId, name, triage, now) {
   try {
+    const pending = await env.DB.prepare("SELECT id FROM tasks WHERE organization_id=? AND lead_id=? AND status IN ('open','in_progress') ORDER BY created_at DESC LIMIT 1").bind(organizationId,leadId).first();
+    if (pending) return {status:"existing",taskId:pending.id};
     const owner = await env.DB.prepare("SELECT m.user_id FROM memberships m WHERE m.organization_id=? AND m.status='active' AND m.role IN ('owner','admin','manager') ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END LIMIT 1").bind(organizationId).first();
-    if (!owner?.user_id) return;
+    if (!owner?.user_id) {
+      console.error("Website follow-up task unassigned: no eligible member", {leadId});
+      return {status:"unassigned"};
+    }
     const due = new Date(Date.parse(now) + (triage.priority === "urgent" ? 4 : triage.priority === "high" ? 24 : 48) * 3600000).toISOString();
+    const taskId=crypto.randomUUID();
     await env.DB.prepare("INSERT INTO tasks(id,organization_id,lead_id,assigned_user_id,created_by_user_id,title,description,priority,status,due_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(),organizationId,leadId,owner.user_id,owner.user_id,triage.action + ": " + name, "AI-assisted triage suggestion (verify before acting). " + triage.reasons,triage.priority,"open",due,now,now).run();
+      .bind(taskId,organizationId,leadId,owner.user_id,owner.user_id,triage.action + ": " + name, "AI-assisted triage suggestion (verify before acting). " + triage.reasons,triage.priority,"open",due,now,now).run();
+    return {status:"created",taskId};
   } catch (error) {
     console.error("Website follow-up task creation failed", { leadId, error: String(error?.message || error) });
+    return {status:"error"};
   }
 }
 
@@ -790,12 +798,13 @@ async function websiteLeadIntake(request, env) {
     const combined=((match.notes||"")+extra).slice(-MAX_LEAD_NOTES);
     await env.DB.prepare("UPDATE leads SET notes=?,company=?,phone=?,updated_at=? WHERE id=? AND organization_id=?")
       .bind(combined,company||match.company,phone||match.phone,new Date().toISOString(),match.id,org).run();
-    return json({ok:true,duplicate:true,updated:true,leadId:match.id});
+    const followUp=await createWebsiteFollowUp(env,org,match.id,name,triage,new Date().toISOString());
+    return json({ok:true,duplicate:true,updated:true,leadId:match.id,followUp:followUp.status});
   }
   const id=crypto.randomUUID(),now=new Date().toISOString();
   await env.DB.prepare("INSERT INTO leads (id,organization_id,owner_user_id,name,company,email,phone,status,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,org,null,name,company,email,phone,"new",source,qualifiedNotes.slice(0,MAX_LEAD_NOTES),now,now).run();
-  await createWebsiteFollowUp(env,org,id,name,triage,now);
-  return json({ok:true,leadId:id},201);
+  const followUp=await createWebsiteFollowUp(env,org,id,name,triage,now);
+  return json({ok:true,leadId:id,followUp:followUp.status},201);
 }
 
 export default {
