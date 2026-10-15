@@ -786,7 +786,7 @@ async function websiteLeadIntake(request, env) {
   const triage=triageWebsiteLead(notes,company,phone);
   const qualifiedNotes=(notes||"")+"\n\nINTERNAL TRIAGE (review required): Priority: "+triage.priority+"; Next step: "+triage.action+"; Signals: "+triage.reasons;
   const previous=await env.DB.prepare("SELECT id FROM leads WHERE organization_id=? AND source=? LIMIT 1").bind(org,source).first();
-  if(previous)return json({ok:true,duplicate:true,leadId:previous.id});
+  if(previous){const followUp=await createWebsiteFollowUp(env,org,previous.id,name,triage,new Date().toISOString());return json({ok:followUp.status==="created"||followUp.status==="existing",duplicate:true,leadId:previous.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);}
   // A new submission from an existing active website lead is an update, not a
   // second sales opportunity. Keep its status and owner, preserve previous notes,
   // and record the new assessment with its own request reference.
@@ -799,12 +799,12 @@ async function websiteLeadIntake(request, env) {
     await env.DB.prepare("UPDATE leads SET notes=?,company=?,phone=?,updated_at=? WHERE id=? AND organization_id=?")
       .bind(combined,company||match.company,phone||match.phone,new Date().toISOString(),match.id,org).run();
     const followUp=await createWebsiteFollowUp(env,org,match.id,name,triage,new Date().toISOString());
-    return json({ok:true,duplicate:true,updated:true,leadId:match.id,followUp:followUp.status});
+    return json({ok:followUp.status==="created"||followUp.status==="existing",duplicate:true,updated:true,leadId:match.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);
   }
   const id=crypto.randomUUID(),now=new Date().toISOString();
   await env.DB.prepare("INSERT INTO leads (id,organization_id,owner_user_id,name,company,email,phone,status,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,org,null,name,company,email,phone,"new",source,qualifiedNotes.slice(0,MAX_LEAD_NOTES),now,now).run();
   const followUp=await createWebsiteFollowUp(env,org,id,name,triage,now);
-  return json({ok:true,leadId:id,followUp:followUp.status},201);
+  return json({ok:followUp.status==="created"||followUp.status==="existing",leadId:id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:201);
 }
 
 export default {
