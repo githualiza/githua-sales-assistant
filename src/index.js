@@ -750,10 +750,18 @@ function triageWebsiteLead(notes, company, phone) {
   return { priority, reasons: reasons.length ? reasons.join("; ") : "Initial enquiry; needs human qualification", action: consultation ? "Arrange consultation" : "Review enquiry and contact prospect" };
 }
 
-async function createWebsiteFollowUp(env, organizationId, leadId, name, triage, now) {
+async function createWebsiteFollowUp(env, organizationId, leadId, name, triage, now, refreshExisting=false) {
   try {
     const pending = await env.DB.prepare("SELECT id FROM tasks WHERE organization_id=? AND lead_id=? AND status IN ('open','in_progress') ORDER BY created_at DESC LIMIT 1").bind(organizationId,leadId).first();
-    if (pending) return {status:"existing",taskId:pending.id};
+    if (pending) {
+      if (refreshExisting) {
+        const due = new Date(Date.parse(now) + (triage.priority === "urgent" ? 4 : triage.priority === "high" ? 24 : 48) * 3600000).toISOString();
+        await env.DB.prepare("UPDATE tasks SET title=?,description=?,priority=?,due_at=?,updated_at=? WHERE id=? AND organization_id=? AND status IN ('open','in_progress')")
+          .bind(triage.action + ": " + name, "Latest website enquiry (review before acting). " + triage.reasons,triage.priority,due,now,pending.id,organizationId).run();
+        return {status:"updated",taskId:pending.id};
+      }
+      return {status:"existing",taskId:pending.id};
+    }
     const owner = await env.DB.prepare("SELECT m.user_id FROM memberships m WHERE m.organization_id=? AND m.status='active' AND m.role IN ('owner','admin','manager') ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END LIMIT 1").bind(organizationId).first();
     if (!owner?.user_id) {
       console.error("Website follow-up task unassigned: no eligible member", {leadId});
@@ -809,7 +817,7 @@ async function websiteLeadIntake(request, env) {
   const triage=triageWebsiteLead(notes,company,phone);
   const qualifiedNotes=(notes||"")+"\n\nINTERNAL TRIAGE (review required): Priority: "+triage.priority+"; Next step: "+triage.action+"; Signals: "+triage.reasons;
   const previous=await env.DB.prepare("SELECT id FROM leads WHERE organization_id=? AND source=? LIMIT 1").bind(org,source).first();
-  if(previous){const followUp=await createWebsiteFollowUp(env,org,previous.id,name,triage,new Date().toISOString());return json({ok:followUp.status==="created"||followUp.status==="existing",duplicate:true,leadId:previous.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);}
+  if(previous){const followUp=await createWebsiteFollowUp(env,org,previous.id,name,triage,new Date().toISOString());return json({ok:["created","existing","updated"].includes(followUp.status),duplicate:true,leadId:previous.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);}
   // A new submission from an existing active website lead is an update, not a
   // second sales opportunity. Keep its status and owner, preserve previous notes,
   // and record the new assessment with its own request reference.
@@ -821,13 +829,13 @@ async function websiteLeadIntake(request, env) {
     const combined=((match.notes||"")+extra).slice(-MAX_LEAD_NOTES);
     await env.DB.prepare("UPDATE leads SET notes=?,company=?,phone=?,updated_at=? WHERE id=? AND organization_id=?")
       .bind(combined,company||match.company,phone||match.phone,new Date().toISOString(),match.id,org).run();
-    const followUp=await createWebsiteFollowUp(env,org,match.id,name,triage,new Date().toISOString());
-    return json({ok:followUp.status==="created"||followUp.status==="existing",duplicate:true,updated:true,leadId:match.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);
+    const followUp=await createWebsiteFollowUp(env,org,match.id,name,triage,new Date().toISOString(),true);
+    return json({ok:["created","existing","updated"].includes(followUp.status),duplicate:true,updated:true,leadId:match.id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:200);
   }
   const id=crypto.randomUUID(),now=new Date().toISOString();
   await env.DB.prepare("INSERT INTO leads (id,organization_id,owner_user_id,name,company,email,phone,status,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,org,null,name,company,email,phone,"new",source,qualifiedNotes.slice(0,MAX_LEAD_NOTES),now,now).run();
-  const followUp=await createWebsiteFollowUp(env,org,id,name,triage,now);
-  return json({ok:followUp.status==="created"||followUp.status==="existing",leadId:id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:201);
+  const followUp=await createWebsiteFollowUp(env,org,id,name,triage,now,true);
+  return json({ok:["created","existing","updated"].includes(followUp.status),leadId:id,followUp:followUp.status},followUp.status==="error"||followUp.status==="unassigned"?503:201);
 }
 
 export default {
