@@ -771,6 +771,29 @@ async function createWebsiteFollowUp(env, organizationId, leadId, name, triage, 
 }
 
 /* Authenticated website intake, disabled until server secrets are configured. */
+async function repairWebsiteFollowUps(request,env){
+ const session=await requireSession(request,env);
+ if(!session?.uid)return json({error:"Unauthorized"},401);
+ const membership=await activeMembership(session,env);
+ if(!membership||!["owner","admin"].includes(membership.role))return json({error:"Forbidden"},403);
+ const org=membership.organization_id;
+ const rows=await env.DB.prepare("SELECT id,name,company,phone,notes,owner_user_id FROM leads WHERE organization_id=? AND source LIKE 'website:%' AND status IN ('new','contacted','qualified','proposal') ORDER BY created_at LIMIT 100").bind(org).all();
+ let created=0,existing=0,failed=0,assigned=0;
+ for(const lead of rows.results||[]){
+   const triage=triageWebsiteLead(lead.notes,lead.company,lead.phone);
+   const now=new Date().toISOString();
+   const outcome=await createWebsiteFollowUp(env,org,lead.id,lead.name,triage,now);
+   if(outcome.status==="created")created++;
+   else if(outcome.status==="existing")existing++;
+   else failed++;
+   if(!lead.owner_user_id && (outcome.status==="created"||outcome.status==="existing")){
+     const task=await env.DB.prepare("SELECT assigned_user_id FROM tasks WHERE id=? AND organization_id=?").bind(outcome.taskId,org).first();
+     if(task?.assigned_user_id){await env.DB.prepare("UPDATE leads SET owner_user_id=?,updated_at=? WHERE id=? AND organization_id=? AND owner_user_id IS NULL").bind(task.assigned_user_id,now,lead.id,org).run();assigned++;}
+   }
+ }
+ return json({ok:failed===0,scanned:(rows.results||[]).length,created,existing,failed,assigned},failed?207:200);
+}
+
 async function websiteLeadIntake(request, env) {
   if (!env.SALES_INTAKE_TOKEN || !env.SALES_INTAKE_ORGANIZATION_ID) return json({error:"Intake not configured"},503);
   if (request.headers.get("authorization") !== `Bearer ${env.SALES_INTAKE_TOKEN}`) return json({error:"Unauthorized"},401);
@@ -813,6 +836,7 @@ export default {
 
     try {
       if (request.method === "GET" && url.pathname === "/") return await dashboard(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/maintenance/website-followups") return await repairWebsiteFollowUps(request,env);
       if (request.method === "POST" && url.pathname === "/v1/intake/website") return await websiteLeadIntake(request,env);
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "githua-sales-assistant" });
       if (request.method === "GET" && url.pathname === "/login") return await startLogin(request, env);
