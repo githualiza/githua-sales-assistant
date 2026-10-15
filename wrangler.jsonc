@@ -9,7 +9,8 @@
   },
   "vars": {
     "AUTH0_DOMAIN": "dev-xdx15sdqsgcvtynj.us.auth0.com",
-    "AUTH0_CLIENT_ID": "0LKaX8JbImoUTVGjVG5PQMbFvYEsGiJ9"
+    "AUTH0_CLIENT_ID": "0LKaX8JbImoUTVGjVG5PQMbFvYEsGiJ9",
+    "SALES_INTAKE_ORGANIZATION_ID": "d80288e2-2e23-4a11-9547-b9dea1f80c9b"
   },
   "d1_databases": [
     {
