@@ -780,7 +780,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/v1/session") return await sessionInfo(request, env);
       if (request.method === "GET" && url.pathname === "/v1/business-documents") return await listBusinessDocuments(request,env);
       if (request.method === "POST" && url.pathname === "/v1/business-documents") return await createBusinessDocument(request,env);
-      if (request.method === "PATCH" && /^\\/v1\\/business-documents\\/[^/]+$/.test(url.pathname)) return await updateBusinessDocument(request,env,decodeURIComponent(url.pathname.split("/")[3]));
+      if (request.method === "PATCH" && url.pathname.startsWith("/v1/business-documents/") && url.pathname.split("/").length === 4) return await updateBusinessDocument(request,env,decodeURIComponent(url.pathname.split("/")[3]));
       if (request.method === "GET" && url.pathname === "/assistant") return await browserAssistantPage(request,env);
       if (request.method === "GET" && url.pathname === "/settings/team") return await settingsTeamPage(request,env);
       if (request.method === "POST" && url.pathname === "/v1/app-assistant") return await browserAssistant(request,env);
