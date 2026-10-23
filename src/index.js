@@ -723,9 +723,9 @@ async function deliveryReviewCentrePage(request,env){
  const canManage=DOCUMENT_APPROVER_ROLES.has(membership.role);
  let rows={results:[]},loadError=false;
  try {
-  const rows=await env.DB.prepare("SELECT p.id,p.document_id,p.recipient_email,p.subject,p.message,p.status,p.created_at,d.reference,d.kind,d.status AS document_status FROM business_document_delivery_preparations p JOIN business_documents d ON d.id=p.document_id AND d.organization_id=p.organization_id WHERE p.organization_id=? ORDER BY p.created_at DESC LIMIT 100").bind(membership.organization_id).all();
+  rows=await env.DB.prepare("SELECT p.id,p.document_id,p.recipient_email,p.subject,p.message,p.status,p.created_at,d.reference,d.kind,d.status AS document_status FROM business_document_delivery_preparations p JOIN business_documents d ON d.id=p.document_id AND d.organization_id=p.organization_id WHERE p.organization_id=? ORDER BY p.created_at DESC LIMIT 100").bind(membership.organization_id).all();
  } catch (error) {
-  console.error("Delivery Review Centre database query failed",error);
+  console.error("Delivery Review Centre database query failed",String(error?.message||error));
   loadError=true;
  }
  const entries=(rows.results||[]).map(p=>'<article class="item"><div class="head"><div><span class="tag">Prepared · Not sent</span><h2>'+escapeHtml(p.reference)+'</h2><p class="muted">'+escapeHtml(p.kind)+' · Document: '+escapeHtml(p.document_status)+' · '+escapeHtml(p.created_at)+'</p></div><a href="/assistant?draft='+encodeURIComponent(p.document_id)+'">Review document</a></div><form data-id="'+escapeHtml(p.id)+'"><label>Recipient email<input name="recipient_email" type="email" maxlength="254" required value="'+escapeHtml(p.recipient_email)+'" '+(canManage?'':'disabled')+'></label><label>Subject<input name="subject" maxlength="180" required value="'+escapeHtml(p.subject)+'" '+(canManage?'':'disabled')+'></label><label>Message<textarea name="message" maxlength="2000" rows="4" required '+(canManage?'':'disabled')+'>'+escapeHtml(p.message)+'</textarea></label>'+(canManage?'<button type="submit">Save changes</button>':'')+'<span class="feedback" role="status"></span></form></article>').join("");
