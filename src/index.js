@@ -745,6 +745,48 @@ async function updateDeliveryPreparation(request,env,id){
  if(!result)return json({error:"Preparation not found or document no longer approved"},409);
  return json({preparation:result,sent:false});
 }
+
+async function internalDeliveryApproval(request,env,id,history=false){
+ const a=await requireBusinessAuth(request,env);
+ if(a instanceof Response)return a;
+ if(!["owner","admin"].includes(a.membership.role))return json({error:"Owner or Admin required"},403);
+ const tenant=a.membership.organization_id;
+ const prep=await env.DB.prepare("SELECT p.id,p.document_id,p.recipient_email,p.subject,p.message,p.status,d.status AS document_status,d.updated_at AS document_updated_at FROM business_document_delivery_preparations p JOIN business_documents d ON d.id=p.document_id AND d.organization_id=p.organization_id WHERE p.id=? AND p.organization_id=?").bind(id,tenant).first();
+ if(!prep)return json({error:"Preparation not found"},404);
+ if(history){
+  const rows=await env.DB.prepare("SELECT action,actor_id,actor_role,previous_status,new_status,revision,reason,created_at FROM business_document_delivery_audit WHERE organization_id=? AND preparation_id=? ORDER BY created_at DESC,id DESC LIMIT 100").bind(tenant,id).all();
+  return json({history:rows.results||[],sent:false});
+ }
+ if(request.method==="GET"){
+  const approval=await env.DB.prepare("SELECT status,revision,approved_fingerprint,actor_id,updated_at FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,tenant).first();
+  return json({approval:approval||{status:"prepared",revision:0},sent:false});
+ }
+ if(request.method!=="POST")return json({error:"Method not allowed"},405);
+ if(prep.document_status!=="approved")return json({error:"Document is not approved"},409);
+ let body;try{body=await request.json()}catch{return json({error:"Invalid JSON"},400)}
+ const action=body?.action;
+ if(!["request","approve","reject","revoke"].includes(action))return json({error:"Invalid action"},400);
+ const reason=typeof body.reason==="string"?body.reason.trim().slice(0,500):"";
+ if(action==="reject"&&!reason)return json({error:"Rejection reason required"},400);
+ const fingerprintData=[prep.document_id,prep.document_updated_at||"",prep.recipient_email,prep.subject,prep.message];
+ const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(fingerprintData)));
+ const fingerprint=Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,"0")).join("");
+ const old=await env.DB.prepare("SELECT status,revision,approved_fingerprint FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,tenant).first();
+ const previous=old?.status||"prepared";
+ if(action==="request"&&!["prepared","rejected"].includes(previous))return json({error:"Invalid state transition"},409);
+ if(action==="approve"&&previous!=="pending_approval")return json({error:"Approval must be requested first"},409);
+ if(action==="reject"&&previous!=="pending_approval")return json({error:"Only pending approvals may be rejected"},409);
+ if(action==="revoke"&&previous!=="approved")return json({error:"Only approved deliveries may be revoked"},409);
+ const next=action==="request"?"pending_approval":action==="approve"?"approved":action==="reject"?"rejected":"pending_approval";
+ const revision=(old?.revision||0)+1,now=new Date().toISOString();
+ const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT OR IGNORE INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now);
+ const event=env.DB.prepare("INSERT INTO business_document_delivery_audit(id,organization_id,preparation_id,actor_id,actor_role,action,previous_status,new_status,revision,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now);
+ try{
+  const results=await env.DB.batch([stmt,event]);
+  if(!results[0]?.meta?.changes) return json({error:"Approval changed concurrently; reload"},409);
+ }catch(error){console.error("Internal approval failed",String(error?.message||error));return json({error:"Approval could not be saved"},500)}
+ return json({approval:{status:next,revision,updated_at:now},sent:false});
+}
 async function documentManagementPage(request,env){
  const session=await requireSession(request,env);if(!session?.uid)return redirect("/login");
  const membership=await activeMembership(session,env);if(!membership||!ASSISTANT_ROLES.has(membership.role))return html("<title>Forbidden</title><p>Document Centre access unavailable.</p>",403);
@@ -942,6 +984,8 @@ export default {
       if (request.method === "POST" && url.pathname.startsWith("/v1/business-documents/") && url.pathname.endsWith("/review") && url.pathname.split("/").length===5) return await transitionBusinessDocument(request,env,decodeURIComponent(url.pathname.split("/")[3]));
       if (request.method === "GET" && url.pathname.startsWith("/v1/business-documents/") && url.pathname.endsWith("/history") && url.pathname.split("/").length===5) return await businessDocumentReviewHistory(request,env,decodeURIComponent(url.pathname.split("/")[3]));
       if ((request.method === "GET" || request.method === "POST") && url.pathname.startsWith("/v1/business-documents/") && url.pathname.endsWith("/delivery-preparations") && url.pathname.split("/").length===5) return await documentDeliveryPreparations(request,env,decodeURIComponent(url.pathname.split("/")[3]));
+      if (url.pathname.startsWith("/v1/document-delivery-preparations/") && url.pathname.endsWith("/approval/history") && request.method==="GET") return await internalDeliveryApproval(request,env,decodeURIComponent(url.pathname.split("/")[3]),true);
+      if (url.pathname.startsWith("/v1/document-delivery-preparations/") && url.pathname.endsWith("/approval") && ["GET","POST"].includes(request.method)) return await internalDeliveryApproval(request,env,decodeURIComponent(url.pathname.split("/")[3]));
       if (request.method === "GET" && url.pathname === "/deliveries") return await deliveryReviewCentrePage(request,env);
       if (request.method === "PATCH" && url.pathname.startsWith("/v1/document-delivery-preparations/") && url.pathname.split("/").length===4) return await updateDeliveryPreparation(request,env,decodeURIComponent(url.pathname.split("/")[3]));
       if (request.method === "GET" && url.pathname === "/documents") return await documentManagementPage(request,env);
