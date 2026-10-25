@@ -728,11 +728,38 @@ async function deliveryReviewCentrePage(request,env){
   console.error("Delivery Review Centre database query failed",String(error?.message||error));
   loadError=true;
  }
- const entries=(rows.results||[]).map(p=>'<article class="item"><div class="head"><div><span class="tag">Prepared · Not sent</span><h2>'+escapeHtml(p.reference)+'</h2><p class="muted">'+escapeHtml(p.kind)+' · Document: '+escapeHtml(p.document_status)+' · '+escapeHtml(p.created_at)+'</p></div><a href="/assistant?draft='+encodeURIComponent(p.document_id)+'">Review document</a></div><form data-id="'+escapeHtml(p.id)+'"><label>Recipient email<input name="recipient_email" type="email" maxlength="254" required value="'+escapeHtml(p.recipient_email)+'" '+(canManage?'':'disabled')+'></label><label>Subject<input name="subject" maxlength="180" required value="'+escapeHtml(p.subject)+'" '+(canManage?'':'disabled')+'></label><label>Message<textarea name="message" maxlength="2000" rows="4" required '+(canManage?'':'disabled')+'>'+escapeHtml(p.message)+'</textarea></label>'+(canManage?'<button type="submit">Save changes</button>':'')+'<span class="feedback" role="status"></span></form></article>').join("");
+ const entries=(rows.results||[]).map(p=>'<article class="item"><div class="head"><div><span class="tag">Prepared · Not sent</span><h2>'+escapeHtml(p.reference)+'</h2><p class="muted">'+escapeHtml(p.kind)+' · Document: '+escapeHtml(p.document_status)+' · '+escapeHtml(p.created_at)+'</p></div><a href="/assistant?draft='+encodeURIComponent(p.document_id)+'">Review document</a></div><form data-id="'+escapeHtml(p.id)+'"><label>Recipient email<input name="recipient_email" type="email" maxlength="254" required value="'+escapeHtml(p.recipient_email)+'" '+(canManage?'':'disabled')+'></label><label>Subject<input name="subject" maxlength="180" required value="'+escapeHtml(p.subject)+'" '+(canManage?'':'disabled')+'></label><label>Message<textarea name="message" maxlength="2000" rows="4" required '+(canManage?'':'disabled')+'>'+escapeHtml(p.message)+'</textarea></label>'+(canManage?'<button type="submit">Save changes</button>':'')+'<span class="feedback" role="status"></span></form>'+(["owner","admin"].includes(membership.role)?'<section class="approval-controls" data-id="'+escapeHtml(p.id)+'"><p class="approval-state">Loading approval status…</p><button type="button" data-action="request">Request approval</button> <button type="button" data-action="approve">Approve</button> <button type="button" data-action="reject">Reject</button> <button type="button" data-action="revoke">Revoke</button> <button type="button" data-action="history">Audit history</button><pre hidden></pre><p class="feedback" role="status"></p></section>':'')+'</article>').join("");
  return html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Delivery Review · Githua Sales Assistant</title><style>
  *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% 0%,rgba(140,86,174,.22),transparent 40%),#0c0a11;color:#f6f0f7;font:15px/1.5 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:40px 24px}a{color:#dec3fa;text-decoration:none}.nav{display:flex;gap:20px;flex-wrap:wrap}.muted{color:#b9a9c0}.item{margin:20px 0;padding:24px;border:1px solid #594361;border-radius:18px;background:#211927}.head{display:flex;justify-content:space-between;align-items:start;gap:16px;flex-wrap:wrap}.tag{color:#e7c8f3;font-size:13px}h1{font-size:36px}h2{margin:6px 0}label{display:block;margin:14px 0;color:#e8d8eb}input,textarea{display:block;width:100%;margin-top:6px;padding:12px;border:1px solid #6a5270;border-radius:10px;background:#100d15;color:#fff;font:inherit}button{background:#dec3fa;color:#211329;border:0;border-radius:10px;padding:11px 20px;font-weight:700;cursor:pointer}.feedback{margin-left:12px}.empty{padding:32px;border:1px dashed #65536a;border-radius:16px}
  </style></head><body><main><nav class="nav"><a href="/documents">← Documents</a><a href="/assistant">AI Assistant</a></nav><h1>Delivery Review Centre</h1><p class="muted">Review and update prepared emails before delivery becomes available. This page cannot send email or attach PDFs.</p>${loadError?'<div class="empty" role="alert">Saved email preparations could not be loaded. Please contact support. No emails were sent.</div>':entries||'<div class="empty">No email preparations yet. Open an approved document in the Document Centre and select Prepare email.</div>'}</main><script nonce="delivery-review-ui">
  document.querySelectorAll("form[data-id]").forEach(form=>form.addEventListener("submit",async e=>{e.preventDefault();const status=form.querySelector(".feedback"),button=form.querySelector("button");button.disabled=true;status.textContent="Saving...";try{const body=Object.fromEntries(new FormData(form));const response=await fetch("/v1/document-delivery-preparations/"+encodeURIComponent(form.dataset.id),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const result=await response.json();if(!response.ok)throw Error(result.error||"Unable to save");status.textContent="Saved · Not sent"}catch(error){status.textContent=error.message||"Unable to save"}finally{button.disabled=false}}));
+
+ document.querySelectorAll(".approval-controls").forEach(async panel=>{
+  const url="/v1/document-delivery-preparations/"+encodeURIComponent(panel.dataset.id)+"/approval";
+  const status=panel.querySelector(".approval-state"),feedback=panel.querySelector(".feedback"),audit=panel.querySelector("pre");
+  async function refresh(){
+   const r=await fetch(url),d=await r.json();if(!r.ok)throw Error(d.error||"Unable to load approval");
+   const state=d.approval.status;status.textContent="Internal status: "+state+" · Not sent";
+   for(const b of panel.querySelectorAll("button")){
+    const action=b.dataset.action;
+    b.disabled=action==="request"?!["prepared","rejected"].includes(state):["approve","reject"].includes(action)?state!=="pending_approval":action==="revoke"?state!=="approved":false;
+   }
+  }
+  for(const b of panel.querySelectorAll("button"))b.addEventListener("click",async()=>{
+   const action=b.dataset.action;feedback.textContent="Working…";
+   try{
+    if(action==="history"){
+     const r=await fetch(url+"/history"),d=await r.json();if(!r.ok)throw Error(d.error||"History unavailable");
+     audit.hidden=false;audit.textContent=(d.history||[]).map(e=>[e.created_at,e.action,e.actor_role,e.reason||""].join(" | ")).join("\n")||"No events";feedback.textContent="History loaded";return;
+    }
+    let reason="";if(action==="reject"){reason=prompt("Rejection reason (required):")||"";if(!reason.trim()){feedback.textContent="Cancelled";return;}}
+    if(!confirm("Confirm internal "+action+"? No email will be sent.")){feedback.textContent="Cancelled";return;}
+    const r=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,reason})}),d=await r.json();
+    if(!r.ok)throw Error(d.error||"Action failed");await refresh();feedback.textContent="Saved internally · Not sent";
+   }catch(e){feedback.textContent=e.message||"Action failed";}
+  });
+  try{await refresh()}catch(e){feedback.textContent=e.message||"Approval unavailable";for(const b of panel.querySelectorAll("button"))b.disabled=true;}
+ });
  </script></body></html>`,200,{"content-security-policy":"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-delivery-review-ui'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});
 }
 async function updateDeliveryPreparation(request,env,id){
@@ -741,6 +768,8 @@ async function updateDeliveryPreparation(request,env,id){
  if(!(request.headers.get("content-type")||"").toLowerCase().startsWith("application/json"))return json({error:"JSON required"},400);
  const raw=await request.text();if(encoder.encode(raw).length>4096)return json({error:"Request too large"},400);
  let email,subject,message;try{const b=JSON.parse(raw);email=b.recipient_email;subject=b.subject;message=b.message;if(typeof email!=="string"||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||typeof subject!=="string"||!subject.trim()||subject.length>180||typeof message!=="string"||!message.trim()||message.length>2000)throw Error("Invalid")}catch{return json({error:"Valid recipient, subject and message required"},400)}
+ const currentApproval=await env.DB.prepare("SELECT status FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,a.membership.organization_id).first();
+ if(currentApproval&&currentApproval.status!=="rejected")return json({error:"Approval request must be rejected before editing; changes require a new approval"},409);
  const result=await env.DB.prepare("UPDATE business_document_delivery_preparations SET recipient_email=?,subject=?,message=? WHERE id=? AND organization_id=? AND status='prepared' AND EXISTS (SELECT 1 FROM business_documents d WHERE d.id=business_document_delivery_preparations.document_id AND d.organization_id=? AND d.status='approved') RETURNING id,status").bind(email.trim(),subject.trim(),message.trim(),id,a.membership.organization_id,a.membership.organization_id).first();
  if(!result)return json({error:"Preparation not found or document no longer approved"},409);
  return json({preparation:result,sent:false});
@@ -775,15 +804,16 @@ async function internalDeliveryApproval(request,env,id,history=false){
  const previous=old?.status||"prepared";
  if(action==="request"&&!["prepared","rejected"].includes(previous))return json({error:"Invalid state transition"},409);
  if(action==="approve"&&previous!=="pending_approval")return json({error:"Approval must be requested first"},409);
+ if(action==="approve"&&(!old?.approved_fingerprint||old.approved_fingerprint!==fingerprint))return json({error:"Prepared content changed since review request; request approval again"},409);
  if(action==="reject"&&previous!=="pending_approval")return json({error:"Only pending approvals may be rejected"},409);
  if(action==="revoke"&&previous!=="approved")return json({error:"Only approved deliveries may be revoked"},409);
  const next=action==="request"?"pending_approval":action==="approve"?"approved":action==="reject"?"rejected":"pending_approval";
  const revision=(old?.revision||0)+1,now=new Date().toISOString();
- const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT OR IGNORE INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now);
+ const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,fingerprint,a.session.uid,reason,now);
  const event=env.DB.prepare("INSERT INTO business_document_delivery_audit(id,organization_id,preparation_id,actor_id,actor_role,action,previous_status,new_status,revision,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now);
  try{
   const results=await env.DB.batch([stmt,event]);
-  if(!results[0]?.meta?.changes) return json({error:"Approval changed concurrently; reload"},409);
+  if(results[0]?.meta?.changes!==1) return json({error:"Approval changed concurrently; reload"},409);
  }catch(error){console.error("Internal approval failed",String(error?.message||error));return json({error:"Approval could not be saved"},500)}
  return json({approval:{status:next,revision,updated_at:now},sent:false});
 }
