@@ -1,0 +1,10 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+const source=readFileSync(new URL("../src/index.js",import.meta.url),"utf8");
+test("internal delivery approval requires owner/admin",()=>assert.match(source,/if\(!\["owner","admin"\]\.includes\(a\.membership\.role\)\)/));
+test("approval request persists a review fingerprint",()=>assert.match(source,/bind\(id,tenant,prep\.document_id,next,revision,fingerprint,a\.session\.uid/));
+test("approval compares fingerprint before granting approval",()=>assert.match(source,/old\.approved_fingerprint!==fingerprint/));
+test("delivery editing blocks pending and approved requests",()=>assert.match(source,/currentApproval&&currentApproval\.status!=="rejected"/));
+test("approval writes audit event in same D1 batch",()=>assert.match(source,/env\.DB\.batch\(\[stmt,event\]\)/));
+test("no email-sending route introduced in approval handler",()=>{const start=source.indexOf("async function internalDeliveryApproval");const end=source.indexOf("async function documentManagementPage",start);assert.ok(start>0&&end>start);const handler=source.slice(start,end);assert.doesNotMatch(handler,/fetch\(|sendEmail|sendMail|smtp|queue\.send/i)});
