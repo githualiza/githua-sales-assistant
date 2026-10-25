@@ -747,8 +747,8 @@ async function updateDeliveryPreparation(request,env,id){
 }
 
 async function internalDeliveryApproval(request,env,id,history=false){
- const a=await requireBusinessAuth(request,env);
- if(a instanceof Response)return a;
+ const a=await documentAuth(request,env,request.method==="POST");
+ if(a.error)return a.error;
  if(!["owner","admin"].includes(a.membership.role))return json({error:"Owner or Admin required"},403);
  const tenant=a.membership.organization_id;
  const prep=await env.DB.prepare("SELECT p.id,p.document_id,p.recipient_email,p.subject,p.message,p.status,d.status AS document_status,d.updated_at AS document_updated_at FROM business_document_delivery_preparations p JOIN business_documents d ON d.id=p.document_id AND d.organization_id=p.organization_id WHERE p.id=? AND p.organization_id=?").bind(id,tenant).first();
