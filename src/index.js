@@ -741,6 +741,8 @@ async function updateDeliveryPreparation(request,env,id){
  if(!(request.headers.get("content-type")||"").toLowerCase().startsWith("application/json"))return json({error:"JSON required"},400);
  const raw=await request.text();if(encoder.encode(raw).length>4096)return json({error:"Request too large"},400);
  let email,subject,message;try{const b=JSON.parse(raw);email=b.recipient_email;subject=b.subject;message=b.message;if(typeof email!=="string"||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||typeof subject!=="string"||!subject.trim()||subject.length>180||typeof message!=="string"||!message.trim()||message.length>2000)throw Error("Invalid")}catch{return json({error:"Valid recipient, subject and message required"},400)}
+ const currentApproval=await env.DB.prepare("SELECT status FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,a.membership.organization_id).first();
+ if(currentApproval&&currentApproval.status!=="rejected")return json({error:"Approval request must be rejected before editing; changes require a new approval"},409);
  const result=await env.DB.prepare("UPDATE business_document_delivery_preparations SET recipient_email=?,subject=?,message=? WHERE id=? AND organization_id=? AND status='prepared' AND EXISTS (SELECT 1 FROM business_documents d WHERE d.id=business_document_delivery_preparations.document_id AND d.organization_id=? AND d.status='approved') RETURNING id,status").bind(email.trim(),subject.trim(),message.trim(),id,a.membership.organization_id,a.membership.organization_id).first();
  if(!result)return json({error:"Preparation not found or document no longer approved"},409);
  return json({preparation:result,sent:false});
@@ -775,11 +777,12 @@ async function internalDeliveryApproval(request,env,id,history=false){
  const previous=old?.status||"prepared";
  if(action==="request"&&!["prepared","rejected"].includes(previous))return json({error:"Invalid state transition"},409);
  if(action==="approve"&&previous!=="pending_approval")return json({error:"Approval must be requested first"},409);
+ if(action==="approve"&&(!old?.approved_fingerprint||old.approved_fingerprint!==fingerprint))return json({error:"Prepared content changed since review request; request approval again"},409);
  if(action==="reject"&&previous!=="pending_approval")return json({error:"Only pending approvals may be rejected"},409);
  if(action==="revoke"&&previous!=="approved")return json({error:"Only approved deliveries may be revoked"},409);
  const next=action==="request"?"pending_approval":action==="approve"?"approved":action==="reject"?"rejected":"pending_approval";
  const revision=(old?.revision||0)+1,now=new Date().toISOString();
- const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT OR IGNORE INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now);
+ const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT OR IGNORE INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now);
  const event=env.DB.prepare("INSERT INTO business_document_delivery_audit(id,organization_id,preparation_id,actor_id,actor_role,action,previous_status,new_status,revision,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now);
  try{
   const results=await env.DB.batch([stmt,event]);
