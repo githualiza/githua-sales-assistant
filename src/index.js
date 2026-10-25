@@ -809,11 +809,11 @@ async function internalDeliveryApproval(request,env,id,history=false){
  if(action==="revoke"&&previous!=="approved")return json({error:"Only approved deliveries may be revoked"},409);
  const next=action==="request"?"pending_approval":action==="approve"?"approved":action==="reject"?"rejected":"pending_approval";
  const revision=(old?.revision||0)+1,now=new Date().toISOString();
- const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT OR IGNORE INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,action==="approve"?fingerprint:null,a.session.uid,reason,now);
+ const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,fingerprint,a.session.uid,reason,now);
  const event=env.DB.prepare("INSERT INTO business_document_delivery_audit(id,organization_id,preparation_id,actor_id,actor_role,action,previous_status,new_status,revision,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now);
  try{
   const results=await env.DB.batch([stmt,event]);
-  if(!results[0]?.meta?.changes) return json({error:"Approval changed concurrently; reload"},409);
+  if(results[0]?.meta?.changes!==1) return json({error:"Approval changed concurrently; reload"},409);
  }catch(error){console.error("Internal approval failed",String(error?.message||error));return json({error:"Approval could not be saved"},500)}
  return json({approval:{status:next,revision,updated_at:now},sent:false});
 }
