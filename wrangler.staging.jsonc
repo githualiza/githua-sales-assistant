@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "githua-sales-assistant-staging",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-28",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "STAGING_ENVIRONMENT": "true",
+    "DOCUMENT_DELIVERY_SENDING_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "githua-sales-assistant-staging",
+      "database_id": "c1a2dd96-8530-4132-8737-2ad0cd693df2",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
