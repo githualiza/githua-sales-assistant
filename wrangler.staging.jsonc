@@ -5,17 +5,19 @@
   "compatibility_date": "2026-09-28",
   "workers_dev": true,
   "preview_urls": false,
-  "observability": {"enabled": true},
+  "observability": {
+    "enabled": true
+  },
   "vars": {
-    "AUTH0_DOMAIN": "dev-xdx15sdqsgcvtynj.us.auth0.com",
-    "AUTH0_CLIENT_ID": "0LKaX8JbImoUTVGjVG5PQMbFvYEsGiJ9",
     "STAGING_ENVIRONMENT": "true",
     "DOCUMENT_DELIVERY_SENDING_ENABLED": "false"
   },
-  "d1_databases": [{
-    "binding": "DB",
-    "database_name": "githua-sales-assistant-staging",
-    "database_id": "c1a2dd96-8530-4132-8737-2ad0cd693df2",
-    "migrations_dir": "migrations"
-  }]
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "githua-sales-assistant-staging",
+      "database_id": "c1a2dd96-8530-4132-8737-2ad0cd693df2",
+      "migrations_dir": "migrations"
+    }
+  ]
 }
