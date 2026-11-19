@@ -791,7 +791,7 @@ async function deliveryReviewCentrePage(request,env){
    try{
     if(action==="history"){
      const r=await fetch(url+"/history"),d=await r.json();if(!r.ok)throw Error(d.error||"History unavailable");
-     audit.hidden=false;audit.textContent=(d.history||[]).map(e=>[e.created_at,e.action,e.actor_role,e.reason||""].join(" | ")).join("\n")||"No events";feedback.textContent="History loaded";return;
+     audit.hidden=false;audit.textContent=(d.history||[]).map(e=>[e.created_at,e.action,e.actor_role,e.reason||""].join(" | ")).join("\\n")||"No events";feedback.textContent="History loaded";return;
     }
     let reason="";if(action==="reject"){reason=prompt("Rejection reason (required):")||"";if(!reason.trim()){feedback.textContent="Cancelled";return;}}
     if(!confirm("Confirm internal "+action+"? No email will be sent.")){feedback.textContent="Cancelled";return;}
