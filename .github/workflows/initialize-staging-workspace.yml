@@ -1,0 +1,60 @@
+name: Initialize Staging Workspace (One Time)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Create owner workspace only when staging is uninitialized
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_STAGING }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { randomUUID } from 'node:crypto';
+          const dbId = 'c1a2dd96-8530-4132-8737-2ad0cd693df2';
+          const prodDbId = '871e8af0-6010-477d-8461-0a8b6e200025';
+          if (dbId === prodDbId || !process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ACCOUNT_ID) throw Error('Staging-only credentials/database required');
+          const url = `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/d1/database/${dbId}/query`;
+          async function query(sql) {
+            const res = await fetch(url, { method: 'POST', headers: {authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'content-type':'application/json'}, body: JSON.stringify({sql}) });
+            const body = await res.json();
+            if (!res.ok || !body.success || !Array.isArray(body.result) || body.result.some(x=>x.success===false)) throw Error('Staging D1 query failed: '+res.status);
+            return body.result;
+          }
+          const [users, orgs, members] = await Promise.all([
+            query('SELECT id, identity_subject, email FROM users'),
+            query('SELECT id, slug FROM organizations'),
+            query('SELECT id, role, user_id FROM memberships')
+          ]);
+          const userRows=users[0]?.results || [];
+          const orgRows=orgs[0]?.results || [];
+          const memberRows=members[0]?.results || [];
+          if (orgRows.length===1 && orgRows[0].slug==='githua-ai-systems' && memberRows.length===1 && memberRows[0].role==='owner' && memberRows[0].user_id===userRows[0]?.id) {
+            console.log('Staging workspace already initialized. No changes made.');
+            process.exit(0);
+          }
+          if (userRows.length!==1 || orgRows.length!==0 || memberRows.length!==0) throw Error('Refusing to seed: expected exactly one staging user, zero organizations, zero memberships');
+          const user=userRows[0];
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id) || !user.email?.includes('@') || !user.identity_subject) throw Error('Staging user identity verification failed');
+          const orgId=randomUUID(), membershipId=randomUUID(), now=new Date().toISOString();
+          const sql=`
+          INSERT INTO organizations (id,slug,name,status,created_at,updated_at)
+          SELECT '${orgId}','githua-ai-systems','Githua AI Systems','active','${now}','${now}'
+          WHERE (SELECT COUNT(*) FROM organizations)=0 AND (SELECT COUNT(*) FROM users)=1;
+          INSERT INTO memberships (id,organization_id,user_id,role,status,created_at,updated_at)
+          SELECT '${membershipId}','${orgId}','${user.id}','owner','active','${now}','${now}'
+          WHERE EXISTS (SELECT 1 FROM organizations WHERE id='${orgId}') AND NOT EXISTS (SELECT 1 FROM memberships);
+          `;
+          await query(sql);
+          const verify=await query('SELECT o.slug, o.status, m.role, m.status AS membership_status FROM organizations o JOIN memberships m ON m.organization_id=o.id');
+          const rows=verify[0]?.results||[];
+          if(rows.length!==1 || rows[0].slug!=='githua-ai-systems' || rows[0].role!=='owner' || rows[0].status!=='active' || rows[0].membership_status!=='active') throw Error('Post-seed verification failed');
+          console.log('Staging owner workspace initialized and verified; production untouched.');
+          NODE
