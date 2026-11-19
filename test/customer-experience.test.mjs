@@ -20,13 +20,14 @@ test("dashboard escapes untrusted user and organization data",()=>{
  assert.match(page,/&lt;img/);
  assert.match(page,/&lt;script&gt;/);
 });
-test("preview is restricted to staging hostname and requires valid session",()=>{
+test("original dashboard is restored and optional help is staging-only",()=>{
  const source=readFileSync(new URL("../src/index.js",import.meta.url),"utf8");
  const dashboard=source.slice(source.indexOf("async function dashboard("),source.indexOf("\nasync function ",source.indexOf("async function dashboard(")+20));
  assert.match(dashboard,/requireSession\(request, env\)/);
  assert.match(dashboard,/env\.STAGING_ENVIRONMENT === "true"/);
  assert.match(dashboard,/githua-sales-assistant-staging\.githualiza\.workers\.dev/);
- assert.match(dashboard,/renderCustomerDashboard/);
+ assert.doesNotMatch(dashboard,/renderCustomerDashboard/);
+ assert.match(dashboard,/githua-guide-open/);
 });
 test("customer experience preview is read-only and makes no outbound calls",()=>{
  const source=readFileSync(new URL("../src/customer-experience.js",import.meta.url),"utf8");
