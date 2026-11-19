@@ -410,6 +410,34 @@ function html(body, status = 200, extraHeaders = {}) {
   });
 }
 
+// Staging-only, interactive, same-origin workspace setup. Never available on production.
+function isStagingSetupRequest(request, env) {
+  return env.STAGING_ENVIRONMENT === "true" &&
+    new URL(request.url).hostname === "githua-sales-assistant-staging.githualiza.workers.dev";
+}
+
+async function stagingSetupPage(request, env) {
+  if (!isStagingSetupRequest(request, env)) return json({ error: "Not found" }, 404);
+  const session = await requireSession(request, env);
+  if (!session?.uid) return redirect("/login");
+  const user = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(session.uid).first();
+  if (!user) return html("<p>Authenticated staging user not registered.</p>", 403);
+  const orgCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first();
+  if (Number(orgCount?.count || 0) !== 0) return html("<p>Staging workspace already exists. Setup is closed; contact the administrator.</p>", 403);
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staging Workspace Setup</title></head><body style="background:#111018;color:#fff;font:16px system-ui;margin:6vw auto;max-width:640px;padding:24px"><h1>Githua AI Systems — Staging Setup</h1><p>This will create the first staging workspace and assign Owner access to the account currently signed in. It will not copy production data.</p><p>Only proceed if you are the authorized staging workspace owner.</p><form method="post" action="/staging/setup"><button type="submit" style="padding:14px 20px;border:0;border-radius:8px;cursor:pointer">Create my staging workspace</button></form></body></html>`);
+}
+
+async function stagingSetupSubmit(request, env) {
+  if (!isStagingSetupRequest(request, env)) return json({ error: "Not found" }, 404);
+  const url = new URL(request.url);
+  if (request.headers.get("origin") !== url.origin) return json({ error: "Origin check failed" }, 403);
+  const type = request.headers.get("content-type") || "";
+  if (!type.startsWith("application/x-www-form-urlencoded")) return json({ error: "Form submission required" }, 415);
+  const result = await bootstrapWorkspace(request, env);
+  if (result.status === 201 || result.status === 200) return redirect("/");
+  return result;
+}
+
 async function dashboard(request, env) {
   const session = await requireSession(request, env);
   if (!session?.uid) return redirect("/login");
@@ -969,6 +997,8 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (request.method === "GET" && url.pathname === "/staging/setup") return await stagingSetupPage(request, env);
+      if (request.method === "POST" && url.pathname === "/staging/setup") return await stagingSetupSubmit(request, env);
       if (request.method === "GET" && url.pathname === "/") return await dashboard(request, env);
       if (request.method === "POST" && url.pathname === "/v1/maintenance/website-followups") return await repairWebsiteFollowUps(request,env);
       if (request.method === "POST" && url.pathname === "/v1/intake/website") return await websiteLeadIntake(request,env);
