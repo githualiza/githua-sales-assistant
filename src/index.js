@@ -1,3 +1,4 @@
+import { renderCustomerDashboard } from "./customer-experience.js";
 import { deliveryPreparationUpdateSQL, approvalUpdateSQL, approvalInsertSQL, approvalAuditSQL } from "./delivery-approval-sql.js";
 const BASE_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -477,6 +478,29 @@ async function dashboard(request, env) {
     conversations: Number(conversationCount.results?.[0]?.count || 0),
     won: Number(wonCount.results?.[0]?.count || 0),
   };
+
+  // Preview the new customer experience on the isolated staging hostname only.
+  // Production continues to use the existing dashboard unchanged.
+  if (env.STAGING_ENVIRONMENT === "true" &&
+      new URL(request.url).hostname === "githua-sales-assistant-staging.githualiza.workers.dev") {
+    const [draftDocs, pendingDocs, preparedDeliveries] = await env.DB.batch([
+      env.DB.prepare("SELECT COUNT(*) AS count FROM business_documents WHERE organization_id = ? AND status = 'draft'").bind(orgId),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM business_documents WHERE organization_id = ? AND status = 'ready_for_review'").bind(orgId),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM business_document_delivery_preparations WHERE organization_id = ?").bind(orgId),
+    ]);
+    const body = renderCustomerDashboard({
+      firstName: (session.name || "there").trim().split(/\\s+/)[0],
+      organization: membership.name,
+      role: membership.role,
+      counts,
+      drafts: draftDocs.results?.[0]?.count || 0,
+      pending: pendingDocs.results?.[0]?.count || 0,
+      preparations: preparedDeliveries.results?.[0]?.count || 0,
+    });
+    return html(body, 200, {
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' https://raw.githubusercontent.com; script-src 'nonce-cx-guide'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    });
+  }
 
   const firstName = escapeHtml((session.name || "there").trim().split(/\s+/)[0]);
   const loginEmail = String(session.email || "").trim().toLowerCase();
