@@ -424,15 +424,27 @@ async function stagingSetupPage(request, env) {
   if (!user) return html("<p>Authenticated staging user not registered.</p>", 403);
   const orgCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first();
   if (Number(orgCount?.count || 0) !== 0) return html("<p>Staging workspace already exists. Setup is closed; contact the administrator.</p>", 403);
-  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staging Workspace Setup</title></head><body style="background:#111018;color:#fff;font:16px system-ui;margin:6vw auto;max-width:640px;padding:24px"><h1>Githua AI Systems — Staging Setup</h1><p>This will create the first staging workspace and assign Owner access to the account currently signed in. It will not copy production data.</p><p>Only proceed if you are the authorized staging workspace owner.</p><form method="post" action="/staging/setup"><button type="submit" style="padding:14px 20px;border:0;border-radius:8px;cursor:pointer">Create my staging workspace</button></form></body></html>`);
+  const csrfToken = await signedValue(env.SESSION_SECRET, {
+    purpose: "staging-workspace-setup",
+    uid: session.uid,
+    exp: Math.floor(Date.now() / 1000) + 600,
+  });
+  return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staging Workspace Setup</title></head><body style="background:#111018;color:#fff;font:16px system-ui;margin:6vw auto;max-width:640px;padding:24px"><h1>Githua AI Systems — Staging Setup</h1><p>This will create the first staging workspace and assign Owner access to the account currently signed in. It will not copy production data.</p><p>Only proceed if you are the authorized staging workspace owner.</p><form method="post" action="/staging/setup"><input type="hidden" name="csrf_token" value="${csrfToken}"><button type="submit" style="padding:14px 20px;border:0;border-radius:8px;cursor:pointer">Create my staging workspace</button></form></body></html>`);
 }
 
 async function stagingSetupSubmit(request, env) {
   if (!isStagingSetupRequest(request, env)) return json({ error: "Not found" }, 404);
+  const session = await requireSession(request, env);
+  if (!session?.uid) return json({ error: "Unauthorized" }, 401);
   const url = new URL(request.url);
-  if (request.headers.get("origin") !== url.origin) return json({ error: "Origin check failed" }, 403);
+  const origin = request.headers.get("origin");
+  if (origin && origin !== "null" && origin !== url.origin) return json({ error: "Origin check failed" }, 403);
   const type = request.headers.get("content-type") || "";
   if (!type.startsWith("application/x-www-form-urlencoded")) return json({ error: "Form submission required" }, 415);
+  const form = await request.formData();
+  const token = form.get("csrf_token");
+  const csrf = typeof token === "string" ? await readSignedValue(env.SESSION_SECRET, token) : null;
+  if (!csrf || csrf.purpose !== "staging-workspace-setup" || csrf.uid !== session.uid) return json({ error: "Invalid or expired setup form. Reload and retry." }, 403);
   const result = await bootstrapWorkspace(request, env);
   if (result.status === 201 || result.status === 200) return redirect("/");
   return result;
