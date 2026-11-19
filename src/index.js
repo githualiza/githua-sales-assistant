@@ -1,4 +1,3 @@
-import { renderCustomerDashboard } from "./customer-experience.js";
 import { deliveryPreparationUpdateSQL, approvalUpdateSQL, approvalInsertSQL, approvalAuditSQL } from "./delivery-approval-sql.js";
 const BASE_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -479,28 +478,35 @@ async function dashboard(request, env) {
     won: Number(wonCount.results?.[0]?.count || 0),
   };
 
-  // Preview the new customer experience on the isolated staging hostname only.
-  // Production continues to use the existing dashboard unchanged.
-  if (env.STAGING_ENVIRONMENT === "true" &&
-      new URL(request.url).hostname === "githua-sales-assistant-staging.githualiza.workers.dev") {
-    const [draftDocs, pendingDocs, preparedDeliveries] = await env.DB.batch([
-      env.DB.prepare("SELECT COUNT(*) AS count FROM business_documents WHERE organization_id = ? AND status = 'draft'").bind(orgId),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM business_documents WHERE organization_id = ? AND status = 'ready_for_review'").bind(orgId),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM business_document_delivery_preparations WHERE organization_id = ?").bind(orgId),
-    ]);
-    const body = renderCustomerDashboard({
-      firstName: (session.name || "there").trim().split(/\\s+/)[0],
-      organization: membership.name,
-      role: membership.role,
-      counts,
-      drafts: draftDocs.results?.[0]?.count || 0,
-      pending: pendingDocs.results?.[0]?.count || 0,
-      preparations: preparedDeliveries.results?.[0]?.count || 0,
-    });
-    return html(body, 200, {
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' https://raw.githubusercontent.com; script-src 'nonce-cx-guide'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-    });
-  }
+  // The original dashboard remains unchanged. Add optional help only in staging.
+  const showContextHelp = env.STAGING_ENVIRONMENT === "true" &&
+    new URL(request.url).hostname === "githua-sales-assistant-staging.githualiza.workers.dev";
+  const guideWidget = showContextHelp ? `
+<style>
+.githua-guide-button{position:fixed;z-index:90;right:20px;bottom:18px;border:1px solid rgba(255,233,251,.6);border-radius:999px;padding:13px 20px;background:linear-gradient(105deg,#ffe8ce,#d9a9f4);color:#25162c;font:700 14px system-ui,sans-serif;box-shadow:0 13px 35px rgba(0,0,0,.55);cursor:pointer}
+.githua-guide-panel{position:fixed;z-index:95;right:18px;bottom:18px;width:min(390px,calc(100vw - 36px));max-height:calc(100vh - 36px);overflow:auto;background:#21152c;border:1px solid #d8b5f5;border-radius:20px;padding:23px;color:#fff5fc;box-shadow:0 20px 65px #05020bbd;font:15px/1.55 system-ui,sans-serif}
+.githua-guide-panel[hidden]{display:none}.githua-guide-panel h2{font:27px Georgia,serif;margin:8px 0 10px}.githua-guide-panel p{color:#ead9ef}.githua-guide-panel .guide-close{float:right;background:transparent;border:1px solid #e1c6ed;border-radius:9px;padding:7px 11px;color:#fff;cursor:pointer}
+.githua-guide-options{display:grid;gap:8px;margin:18px 0}.githua-guide-options button{border:1px solid #a58bb3;background:#3b284c;color:#fff;border-radius:10px;padding:11px;text-align:left;cursor:pointer}.githua-guide-panel a{display:inline-block;border-radius:12px;padding:10px 15px;background:#f3d8f9;color:#22112b;font-weight:700;text-decoration:none}
+.githua-guide-button:focus-visible,.githua-guide-panel button:focus-visible,.githua-guide-panel a:focus-visible{outline:3px solid #ffe3b8;outline-offset:3px}
+@media(max-width:600px){.githua-guide-button{right:12px;bottom:12px}.githua-guide-panel{right:10px;bottom:10px;width:calc(100vw - 20px)}}
+</style>
+<button id="githua-guide-open" class="githua-guide-button" type="button" aria-controls="githua-guide-panel" aria-expanded="false">✦ Show me how</button>
+<section id="githua-guide-panel" class="githua-guide-panel" role="dialog" aria-modal="false" aria-labelledby="githua-guide-title" hidden>
+ <button type="button" class="guide-close" id="githua-guide-close" aria-label="Close guidance">✕</button>
+ <small>GITHUA SALES ASSISTANT · HELP</small><h2 id="githua-guide-title">How can I help?</h2>
+ <p id="githua-guide-copy">Choose an action to see the next steps without leaving your dashboard.</p>
+ <div class="githua-guide-options"><button type="button" data-help="quote">Create a quotation</button><button type="button" data-help="documents">Find and approve documents</button><button type="button" data-help="delivery">Prepare a delivery</button><button type="button" data-help="leads">Manage leads and follow-ups</button><button type="button" data-help="tasks">Manage tasks</button></div>
+ <a id="githua-guide-link" href="/assistant">Open AI Assistant</a>
+</section>
+<script nonce="githua-help-only">
+(()=>{const messages={
+quote:["Create a quotation","Open the AI Assistant, choose Guided quotation, complete the questions and Save draft. Open Documents to submit your draft for review.","/assistant","Open AI Assistant"],
+documents:["Review a document","Go to Documents. Choose Submit for review, then an authorized approver can select Approve. Approving a document does not send it.","/documents","Open Documents"],
+delivery:["Prepare a delivery","Once a document is approved, choose Prepare email in Documents. Review its details in Delivery Review. No email is sent.","/deliveries","Open Delivery Review"],
+leads:["Manage leads","Open Leads to add a new enquiry, update its progress and record the next follow-up.","/leads","Open Leads"],
+tasks:["Track tasks","Open Tasks to review what needs attention and add a follow-up or deadline.","/tasks","Open Tasks"]
+};const open=document.getElementById("githua-guide-open"),panel=document.getElementById("githua-guide-panel"),close=document.getElementById("githua-guide-close"),title=document.getElementById("githua-guide-title"),copy=document.getElementById("githua-guide-copy"),link=document.getElementById("githua-guide-link");let last;function reveal(){last=document.activeElement;panel.hidden=false;open.setAttribute("aria-expanded","true");close.focus()}function hide(){panel.hidden=true;open.setAttribute("aria-expanded","false");if(last&&last.focus)last.focus()}open.addEventListener("click",reveal);close.addEventListener("click",hide);document.querySelectorAll("[data-help]").forEach(b=>b.addEventListener("click",()=>{const m=messages[b.dataset.help];title.textContent=m[0];copy.textContent=m[1];link.href=m[2];link.textContent=m[3]}));document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!panel.hidden)hide()})})();
+</script>` : "";
 
   const firstName = escapeHtml((session.name || "there").trim().split(/\s+/)[0]);
   const loginEmail = String(session.email || "").trim().toLowerCase();
@@ -545,7 +551,7 @@ async function dashboard(request, env) {
 <main class="main"><div class="bar"><form class="search" action="/leads" method="get" role="search"><label for="dashboard-search">⌕</label><input id="dashboard-search" name="q" type="search" placeholder="Search leads..." aria-label="Search leads" required><button type="submit" aria-label="Search leads">Search</button></form><details class="profile-menu"><summary class="profile"><span class="avatar">${displayName.slice(0,1).toUpperCase()}</span><span><b>${displayName}</b><small>${orgName}</small></span><span aria-hidden="true">⌄</span></summary><nav class="profile-dropdown" aria-label="Account menu"><div class="menu-identity"><strong>${displayName}</strong><small>${escapeHtml(session.email || "")}</small><small>${role} · ${orgName}</small></div><a href="/settings/team">Workspace &amp; team settings →</a><a href="/assistant">Open Sales Assistant →</a><a class="menu-signout" href="/logout">Sign out →</a></nav></details></div><section class="hero"><div class="eyebrow">Sales Assistant</div><h1>Good to see you, ${displayName}.</h1><p>A calm view of your sales work, conversations and next moves.</p></section>
 <div class="content"><div><section class="metrics"><div class="card metric"><div class="row"><span class="circle">♟</span><div>Total leads<strong>${counts.leads}</strong><a href="/leads">View leads →</a></div></div></div><div class="card metric"><div class="row"><span class="circle">●</span><div>Open conversations<strong>${counts.conversations}</strong><a href="/conversations">View conversations →</a></div></div></div><div class="card metric"><div class="row"><span class="circle">♜</span><div>Won leads<strong>${counts.won}</strong><a href="#">View wins →</a></div></div></div></section><section class="card quick"><div class="sectiontitle">✦ Quick actions<div class="sub">Get things done faster.</div></div><div class="actions"><a class="action" href="/leads?add=1"><span class="circle">＋</span><b>Add a new lead</b><span>Capture and qualify new opportunities.</span></a><a class="action" href="/conversations"><span class="circle">◌</span><b>Start a conversation</b><span>Continue a client conversation.</span></a><a class="action" href="/proposals"><span class="circle">▤</span><b>Create proposal</b><span>Build a proposal or budget.</span></a><a class="action" href="/tasks"><span class="circle">☑</span><b>Add a task</b><span>Keep your work on track.</span></a></div></section></div>
 <aside class="card assistant premium-assistant"><div class="assistant-aura"></div><div class="bird premium-bird">${birdSvg}</div><div class="assistant-kicker">GITHUA INTELLIGENCE</div><h2>Sales Intelligence, elevated.</h2><p>Your private strategic assistant for opportunities, follow-ups, proposals and the decisions that move business forward.</p><div class="assistant-capability"><span>✦</span><div><b>Context-aware</b><small>Grounded in your approved knowledge and live workspace.</small></div></div><a class="open premium-open" href="/assistant">Enter Assistant <span>→</span></a><div class="try premium-try"><div>Prepare my next client move →</div><div>Show what needs my attention →</div><div>Summarize my active opportunities →</div></div></aside></div>
-<section class="bottom"><div class="card empty"><div class="emptyhead"><b>Recent leads</b><a href="/leads">View all →</a></div><div class="sub">Your latest leads and activity.</div><div class="emptybody"><b>No leads yet</b><br><span>When you add leads, they'll appear here.</span><br><a class="pill" href="/leads?add=1">Add your first lead →</a></div></div><div class="card empty"><div class="emptyhead"><b>Recent conversations</b><a href="#">View all →</a></div><div class="sub">Your latest conversations.</div><div class="emptybody"><b>No conversations yet</b><br><span>Your recent conversations will appear here.</span><br><a class="pill" href="#">Start a conversation →</a></div></div><div class="card empty"><div class="emptyhead"><b>Tasks</b><a href="#">View all →</a></div><div class="sub">Your upcoming tasks.</div><div class="emptybody"><b>No tasks yet</b><br><span>Add tasks to keep your work on track.</span><br><a class="pill" href="#">Add a task →</a></div></div></section></main></div></body></html>`);
+<section class="bottom"><div class="card empty"><div class="emptyhead"><b>Recent leads</b><a href="/leads">View all →</a></div><div class="sub">Your latest leads and activity.</div><div class="emptybody"><b>No leads yet</b><br><span>When you add leads, they'll appear here.</span><br><a class="pill" href="/leads?add=1">Add your first lead →</a></div></div><div class="card empty"><div class="emptyhead"><b>Recent conversations</b><a href="#">View all →</a></div><div class="sub">Your latest conversations.</div><div class="emptybody"><b>No conversations yet</b><br><span>Your recent conversations will appear here.</span><br><a class="pill" href="#">Start a conversation →</a></div></div><div class="card empty"><div class="emptyhead"><b>Tasks</b><a href="#">View all →</a></div><div class="sub">Your upcoming tasks.</div><div class="emptybody"><b>No tasks yet</b><br><span>Add tasks to keep your work on track.</span><br><a class="pill" href="#">Add a task →</a></div></div></section></main></div>${guideWidget}</body></html>`, 200, showContextHelp ? {"content-security-policy":"default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com; script-src 'nonce-githua-help-only'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"} : {});
 }
 
 async function leadsPage(request, env) {
