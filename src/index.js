@@ -1,3 +1,4 @@
+import { deliveryPreparationUpdateSQL, approvalUpdateSQL, approvalInsertSQL, approvalAuditSQL } from "./delivery-approval-sql.js";
 const BASE_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -779,10 +780,10 @@ async function deliveryReviewCentrePage(request,env){
   const status=panel.querySelector(".approval-state"),feedback=panel.querySelector(".feedback"),audit=panel.querySelector("pre");
   async function refresh(){
    const r=await fetch(url),d=await r.json();if(!r.ok)throw Error(d.error||"Unable to load approval");
-   const state=d.approval.status;status.textContent="Internal status: "+state+" · Not sent";
+   const state=d.approval.status;status.textContent="Internal status: "+state+(d.stale?" (stale — document or prepared content changed)":"")+" · Not sent";
    for(const b of panel.querySelectorAll("button")){
     const action=b.dataset.action;
-    b.disabled=action==="request"?!["prepared","rejected"].includes(state):["approve","reject"].includes(action)?state!=="pending_approval":action==="revoke"?state!=="approved":false;
+    b.disabled=action==="request"?!["prepared","rejected"].includes(state):action==="approve"?state!=="pending_approval"||d.stale:action==="reject"?state!=="pending_approval":action==="revoke"?state!=="approved":false;
    }
   }
   for(const b of panel.querySelectorAll("button"))b.addEventListener("click",async()=>{
@@ -808,9 +809,7 @@ async function updateDeliveryPreparation(request,env,id){
  if(!(request.headers.get("content-type")||"").toLowerCase().startsWith("application/json"))return json({error:"JSON required"},400);
  const raw=await request.text();if(encoder.encode(raw).length>4096)return json({error:"Request too large"},400);
  let email,subject,message;try{const b=JSON.parse(raw);email=b.recipient_email;subject=b.subject;message=b.message;if(typeof email!=="string"||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||typeof subject!=="string"||!subject.trim()||subject.length>180||typeof message!=="string"||!message.trim()||message.length>2000)throw Error("Invalid")}catch{return json({error:"Valid recipient, subject and message required"},400)}
- const currentApproval=await env.DB.prepare("SELECT status FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,a.membership.organization_id).first();
- if(currentApproval&&currentApproval.status!=="rejected")return json({error:"Approval request must be rejected before editing; changes require a new approval"},409);
- const result=await env.DB.prepare("UPDATE business_document_delivery_preparations SET recipient_email=?,subject=?,message=? WHERE id=? AND organization_id=? AND status='prepared' AND EXISTS (SELECT 1 FROM business_documents d WHERE d.id=business_document_delivery_preparations.document_id AND d.organization_id=? AND d.status='approved') RETURNING id,status").bind(email.trim(),subject.trim(),message.trim(),id,a.membership.organization_id,a.membership.organization_id).first();
+ const result=await env.DB.prepare(deliveryPreparationUpdateSQL).bind(email.trim(),subject.trim(),message.trim(),id,a.membership.organization_id,a.membership.organization_id).first();
  if(!result)return json({error:"Preparation not found or document no longer approved"},409);
  return json({preparation:result,sent:false});
 }
@@ -828,7 +827,14 @@ async function internalDeliveryApproval(request,env,id,history=false){
  }
  if(request.method==="GET"){
   const approval=await env.DB.prepare("SELECT status,revision,approved_fingerprint,actor_id,updated_at FROM business_document_delivery_approvals WHERE preparation_id=? AND organization_id=?").bind(id,tenant).first();
-  return json({approval:approval||{status:"prepared",revision:0},sent:false});
+  let stale=false;
+  if(approval && ["pending_approval","approved"].includes(approval.status)){
+   const fingerprintData=[prep.document_id,prep.document_updated_at||"",prep.recipient_email,prep.subject,prep.message];
+   const hash=await crypto.subtle.digest("SHA-256",encoder.encode(JSON.stringify(fingerprintData)));
+   const currentFingerprint=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,"0")).join("");
+   stale=prep.document_status!=="approved" || currentFingerprint!==approval.approved_fingerprint;
+  }
+  return json({approval:approval||{status:"prepared",revision:0},stale,sent:false});
  }
  if(request.method!=="POST")return json({error:"Method not allowed"},405);
  if(prep.document_status!=="approved")return json({error:"Document is not approved"},409);
@@ -849,11 +855,15 @@ async function internalDeliveryApproval(request,env,id,history=false){
  if(action==="revoke"&&previous!=="approved")return json({error:"Only approved deliveries may be revoked"},409);
  const next=action==="request"?"pending_approval":action==="approve"?"approved":action==="reject"?"rejected":"pending_approval";
  const revision=(old?.revision||0)+1,now=new Date().toISOString();
- const stmt=old?env.DB.prepare("UPDATE business_document_delivery_approvals SET status=?,revision=?,approved_fingerprint=?,actor_id=?,decision_reason=?,updated_at=? WHERE preparation_id=? AND organization_id=? AND revision=?").bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,id,tenant,old.revision):env.DB.prepare("INSERT INTO business_document_delivery_approvals(preparation_id,organization_id,document_id,status,revision,approved_fingerprint,actor_id,decision_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,tenant,prep.document_id,next,revision,fingerprint,a.session.uid,reason,now);
- const event=env.DB.prepare("INSERT INTO business_document_delivery_audit(id,organization_id,preparation_id,actor_id,actor_role,action,previous_status,new_status,revision,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now);
+ const transitionId=crypto.randomUUID();
+ const snapshot=[id,tenant,prep.recipient_email,prep.subject,prep.message,prep.document_updated_at||""];
+ const stmt=old
+  ?env.DB.prepare(approvalUpdateSQL).bind(next,revision,["request","approve"].includes(action)?fingerprint:null,a.session.uid,reason,now,transitionId,id,tenant,old.revision,previous,...snapshot)
+  :env.DB.prepare(approvalInsertSQL).bind(id,tenant,prep.document_id,next,revision,fingerprint,a.session.uid,reason,now,transitionId,id,tenant,prep.document_id,prep.recipient_email,prep.subject,prep.message,prep.document_updated_at||"",id,tenant);
+ const event=env.DB.prepare(approvalAuditSQL).bind(crypto.randomUUID(),tenant,id,a.session.uid,a.membership.role,action,previous,next,revision,reason,now,id,tenant,revision,transitionId);
  try{
   const results=await env.DB.batch([stmt,event]);
-  if(results[0]?.meta?.changes!==1) return json({error:"Approval changed concurrently; reload"},409);
+  if(results[0]?.meta?.changes!==1 || results[1]?.meta?.changes!==1)return json({error:"Approval changed concurrently or prepared content is stale; reload"},409);
  }catch(error){console.error("Internal approval failed",String(error?.message||error));return json({error:"Approval could not be saved"},500)}
  return json({approval:{status:next,revision,updated_at:now},sent:false});
 }
