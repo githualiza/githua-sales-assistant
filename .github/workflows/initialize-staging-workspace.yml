@@ -36,6 +36,14 @@ jobs:
           const userRows=users[0]?.results || [];
           const orgRows=orgs[0]?.results || [];
           const memberRows=members[0]?.results || [];
+          // Safe diagnostics: report counts and roles only; never print emails, subjects, or user IDs.
+          console.log('Staging preflight:', JSON.stringify({
+            registered_users: userRows.length,
+            organizations: orgRows.length,
+            memberships: memberRows.length,
+            organization_slugs: orgRows.map(r=>r.slug),
+            membership_roles: memberRows.map(r=>r.role)
+          }));
           if (orgRows.length===1 && orgRows[0].slug==='githua-ai-systems' && memberRows.length===1 && memberRows[0].role==='owner' && memberRows[0].user_id===userRows[0]?.id) {
             console.log('Staging workspace already initialized. No changes made.');
             process.exit(0);
