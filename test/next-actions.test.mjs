@@ -41,5 +41,6 @@ test("page is gated by staging hostname, session and organization membership",()
 test("original dashboard design and no customer sends preserved",()=>{
  assert.match(source,/Luminous%20Silk%20Ribbons/);
  assert.match(source,/githua-guide-panel/);
- assert.match(source,/DOCUMENT_DELIVERY_SENDING_ENABLED/);
+ const config=readFileSync(new URL("../wrangler.staging.jsonc",import.meta.url),"utf8");
+ assert.match(config,/"DOCUMENT_DELIVERY_SENDING_ENABLED": "false"/);
 });
