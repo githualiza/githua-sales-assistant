@@ -1,3 +1,4 @@
+import { prioritizeWorkspace, renderNextActions } from "./next-actions.js";
 import { contextualAiEnabled, contextualAiPanel } from "./contextual-ai-panel.js";
 import { isStagingJourney, workflowGuide } from "./document-journey.js";
 import { deliveryPreparationUpdateSQL, approvalUpdateSQL, approvalInsertSQL, approvalAuditSQL } from "./delivery-approval-sql.js";
@@ -453,6 +454,28 @@ async function stagingSetupSubmit(request, env) {
   return result;
 }
 
+async function nextActionsPage(request,env){
+ if(!isStagingSetupRequest(request,env))return json({error:"Not found"},404);
+ const session=await requireSession(request,env);
+ if(!session?.uid)return redirect("/login");
+ const membership=await activeMembership(session,env);
+ if(!membership)return html("<title>Forbidden</title><p>Workspace access unavailable.</p>",403);
+ const taskAllowed=TASK_READ_ROLES.has(membership.role),leadAllowed=LEAD_READ_ROLES.has(membership.role),docAllowed=ASSISTANT_ROLES.has(membership.role);
+ const orgId=membership.organization_id;
+ const queries=[
+  ...(taskAllowed?[["tasks","SELECT id,title,status,priority,due_at FROM tasks WHERE organization_id=? AND status IN ('open','in_progress') ORDER BY due_at IS NULL,due_at LIMIT 100"]]:[]),
+  ...(docAllowed?[["documents","SELECT id,reference,status FROM business_documents WHERE organization_id=? AND status IN ('ready_for_review','rejected') ORDER BY updated_at DESC LIMIT 100"]]:[]),
+  ...(leadAllowed?[["leads","SELECT id,name,status FROM leads WHERE organization_id=? AND status='new' ORDER BY updated_at DESC LIMIT 100"]]:[])
+ ];
+ const result=await Promise.allSettled(queries.map(async ([kind,sql])=>({kind,rows:await env.DB.prepare(sql).bind(orgId).all()})));
+ const records={tasks:[],documents:[],leads:[]};let partial=false;
+ for(let i=0;i<result.length;i++){
+  if(result[i].status==="fulfilled")records[result[i].value.kind]=result[i].value.rows.results||[];
+  else {partial=true;console.warn("Staging next-actions source temporarily unavailable",{source:queries[i][0]})}
+ }
+ return html(renderNextActions({actions:prioritizeWorkspace(records),partial,taskAllowed,leadAllowed,docAllowed}),200);
+}
+
 async function dashboard(request, env) {
   const session = await requireSession(request, env);
   if (!session?.uid) return redirect("/login");
@@ -499,6 +522,7 @@ async function dashboard(request, env) {
  <p id="githua-guide-copy">Choose an action to see the next steps without leaving your dashboard.</p>
  <div class="githua-guide-options"><button type="button" data-help="quote">Create a quotation</button><button type="button" data-help="documents">Find and approve documents</button><button type="button" data-help="delivery">Prepare a delivery</button><button type="button" data-help="leads">Manage leads and follow-ups</button><button type="button" data-help="tasks">Manage tasks</button></div>
  <a id="githua-guide-link" href="/assistant">Open AI Assistant</a>
+ <p style="margin:12px 0 0"><a href="/next-actions">View my next actions →</a></p>
 </section>
 <script nonce="githua-help-only">
 (()=>{const messages={
@@ -1103,6 +1127,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/staging/setup") return await stagingSetupPage(request, env);
       if (request.method === "POST" && url.pathname === "/staging/setup") return await stagingSetupSubmit(request, env);
       if (request.method === "GET" && url.pathname === "/") return await dashboard(request, env);
+      if (request.method === "GET" && url.pathname === "/next-actions") return await nextActionsPage(request,env);
       if (request.method === "POST" && url.pathname === "/v1/maintenance/website-followups") return await repairWebsiteFollowUps(request,env);
       if (request.method === "POST" && url.pathname === "/v1/intake/website") return await websiteLeadIntake(request,env);
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "githua-sales-assistant" });
