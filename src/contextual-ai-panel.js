@@ -7,7 +7,7 @@ export function contextualAiEnabled(request, env) {
 export function contextualAiPanel(page) {
  if (!["documents","deliveries"].includes(page)) throw Error("Unsupported page");
  const label=page==="documents"?"Documents":"Delivery Review";
- const fragment = \`<style>
+ const fragment = `<style>
 .cx-ai-toggle{position:fixed;bottom:18px;right:18px;z-index:105;border:1px solid #efdcff;border-radius:30px;padding:12px 18px;color:#201026;background:linear-gradient(110deg,#ffe7cf,#ddb4f7);font:700 14px system-ui;box-shadow:0 12px 30px #0009;cursor:pointer}
 .cx-ai-panel{position:fixed;z-index:106;bottom:16px;right:16px;width:min(425px,calc(100vw - 32px));max-height:min(620px,calc(100dvh - 32px));background:#1a1125;border:1px solid #b99dd0;border-radius:20px;box-shadow:0 20px 65px #000b;display:flex;flex-direction:column;color:#fcf5ff;font:14px/1.5 system-ui}
 .cx-ai-panel[hidden]{display:none}.cx-ai-header{display:flex;align-items:center;justify-content:space-between;padding:18px;border-bottom:1px solid #6d557d}.cx-ai-header strong{font:23px Georgia,serif}.cx-ai-close{color:#fff;background:#342343;border:1px solid #ba9cce;border-radius:9px;padding:7px 10px;cursor:pointer}
@@ -44,6 +44,6 @@ append("assistant",result.answer);history=[...outgoing,{role:"assistant",content
 finally{working=false;send.disabled=false}
 });
 })();
-</script>\`;
+</script>`;
  return fragment.replaceAll("__LABEL__",label);
 }
