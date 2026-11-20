@@ -46,7 +46,7 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const names = new Set(JSON.parse(fs.readFileSync('/tmp/staging-secret-list.json','utf8')).map(x=>x.name));
-          for (const name of ['SESSION_SECRET','AUTH0_CLIENT_SECRET']) if (!names.has(name)) throw Error('Missing staging Worker secret: '+name);
+          for (const name of ['SESSION_SECRET','AUTH0_CLIENT_SECRET','OPENROUTER_API_KEY']) if (!names.has(name)) throw Error('Missing staging Worker secret: '+name);
           NODE
       - name: Apply staging D1 migrations only
         env:
