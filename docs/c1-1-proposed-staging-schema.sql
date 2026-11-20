@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS c1_invoices (
  UNIQUE(organization_id,id),
  UNIQUE(organization_id,reference),
  FOREIGN KEY(organization_id,customer_id) REFERENCES c1_customers(organization_id,id),
- FOREIGN KEY(organization_id,source_business_document_id) REFERENCES business_documents(organization_id,id),
+ -- Source document tenant ownership must be checked in authorized service code;
+ -- business_documents does not currently expose a composite tenant+id unique key.
  CHECK((status IN ('issued','voided') AND issue_date IS NOT NULL AND issued_by IS NOT NULL) OR status IN ('draft','ready_for_review'))
 );
 CREATE INDEX IF NOT EXISTS idx_c1_invoices_org_status ON c1_invoices(organization_id,status,updated_at DESC);
