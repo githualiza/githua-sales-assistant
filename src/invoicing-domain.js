@@ -34,7 +34,7 @@ export function calculateInvoice({currency:code,items,discountMinor=0,taxRateBas
  if(discount>subtotalMinor)throw new RangeError("Discount exceeds subtotal");
  const taxableMinor=subtotalMinor-discount;
  // Explicit tax-exclusive model. Round the aggregate tax once, half up.
- const taxMinor=Math.floor((taxableMinor*rate+5000)/10000);
+ const taxMinor=Number((BigInt(taxableMinor)*BigInt(rate)+5000n)/10000n);
  const totalMinor=safeAdd(taxableMinor,taxMinor,"invoice total");
  return {currency:code,lines,subtotalMinor,discountMinor:discount,taxableMinor,taxRateBasisPoints:rate,taxMinor,totalMinor,taxMode:"exclusive"};
 }
