@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS c1_payments (
  reversal_reason TEXT,
  updated_at TEXT NOT NULL,
  UNIQUE(organization_id,id),
+ UNIQUE(organization_id,id,invoice_id),
  FOREIGN KEY(organization_id,invoice_id) REFERENCES c1_invoices(organization_id,id),
  CHECK((status='verified' AND verified_by IS NOT NULL AND verified_at IS NOT NULL) OR status!='verified')
 );
@@ -95,7 +96,7 @@ CREATE TABLE IF NOT EXISTS c1_receipts (
  UNIQUE(organization_id,id),
  UNIQUE(organization_id,reference),
  UNIQUE(organization_id,payment_id),
- FOREIGN KEY(organization_id,payment_id) REFERENCES c1_payments(organization_id,id),
+ FOREIGN KEY(organization_id,payment_id,invoice_id) REFERENCES c1_payments(organization_id,id,invoice_id),
  FOREIGN KEY(organization_id,invoice_id) REFERENCES c1_invoices(organization_id,id),
  CHECK((status IN ('issued','voided') AND issued_at IS NOT NULL AND issued_by IS NOT NULL) OR status='draft')
 );
