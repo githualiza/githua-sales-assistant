@@ -53,7 +53,12 @@ def main():
         reject_integrity(con,payment,pay("cross-pay","orgB","invA","wrongtenant"))
         reject_integrity(con,payment,pay("duplicate-provider","orgA","invA","transactionA"))
         reject_integrity(con,payment,pay("negative-payment","orgA","invA","negative",-1))
-        reject_integrity(con,payment,pay("unverified-without-actor","orgA","invA","unverified",100,"verified")[:-3]+(None,stamp,stamp)) if False else None
+        bad_verified=list(pay("bad-no-verifier","orgA","invA","bad-no-verifier"))
+        bad_verified[10]=None
+        reject_integrity(con,payment,tuple(bad_verified))
+        bad_verified[10]="userA"
+        bad_verified[12]=None
+        reject_integrity(con,payment,tuple(bad_verified))
         receipt="INSERT INTO c1_receipts(id,organization_id,payment_id,invoice_id,reference,currency,amount_minor,snapshot_json,status,prepared_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
         def rec(id,org,payment,invoice,reference):
             return (id,org,payment,invoice,reference,"KES",1000,"{}","draft","userA",stamp)
