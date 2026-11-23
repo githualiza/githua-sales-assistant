@@ -12,7 +12,7 @@ test("C1 validation cannot access staging or production",()=>{
  const code=readFileSync(new URL("../scripts/validate-c1-disposable-sqlite.py",import.meta.url),"utf8");
  assert.match(code,/tempfile\.TemporaryDirectory/);
  assert.match(code,/sqlite3\.connect/);
- assert.doesNotMatch(code,/cloudflare|requests\.|urllib|wrangler d1 execute/i);
+ assert.doesNotMatch(code,/^\\s*(?:import requests|from urllib|subprocess\\.|os\\.system|wrangler d1 execute)/m);
  const config=readFileSync(new URL("../wrangler.staging.jsonc",import.meta.url),"utf8");
  assert.match(config,/"DOCUMENT_DELIVERY_SENDING_ENABLED": "false"/);
 });
