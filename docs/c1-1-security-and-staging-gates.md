@@ -30,3 +30,11 @@ Add separate organization-scoped customer, invoice, payment, receipt, sequence, 
 - No code routes, existing Worker config, secrets, or migrations are changed in C1.1 offline draft.
 - Before real staging migration, create a separate draft PR, perform offline disposable D1 validation, obtain explicit staging authorization, and use a targeted staging deployment. Nothing auto-applies to production.
 - PR #89 Daily Focus remains separate and is not in scope.
+
+## Disposable SQLite validation after PR #91
+
+A local, in-memory SQLite test with foreign keys enabled and minimal prerequisite `organizations`/`users` table definitions validated the proposed new tables. Positive checks: six tables created, `PRAGMA foreign_key_check` returned no violations; invalid cross-tenant customer, invoice and payment references, duplicate provider references, duplicate receipt per payment, duplicate invoice references and negative invoice amounts were rejected.
+
+**One actual gap discovered and corrected in this revision:** the original schema allowed a same-tenant receipt to identify invoice A while its payment belonged to invoice B. The revised schema adds `UNIQUE(organization_id,id,invoice_id)` on payments and a composite `FOREIGN KEY(organization_id,payment_id,invoice_id)` on receipts. Re-running the disposable test rejected that mismatched receipt with a foreign-key violation.
+
+This is a **subset test with minimal prerequisites**, not full Cloudflare D1 migration validation or a live integration test. It does not prove authorization, matching currency/amount, receipt verification, immutable issued records or double-spend protection. Those require the separate audited service-layer implementation and a full disposable D1 test before any staging migration.
